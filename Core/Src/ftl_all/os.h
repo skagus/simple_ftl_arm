@@ -5,7 +5,7 @@
 
 #define MAX_OS				(1)		///< Number of max OS (>= NUM CPU.
 #define MAX_EVT				(32)			///< Maximum kinds of event.
-#define MAX_TASK			(32)
+#define MAX_TASK			(8)
 #define HANG_TIME			(OS_SEC(5))		///< 
 #define DEF_TASK_GRP		(FF08)			///< Task group for default group.
 #define INV_TASK			(FF08)			///< Invalid task id.

@@ -28,6 +28,7 @@ struct OS_Info
 	TCB		_aTCB[MAX_TASK];	///< TCB 상당의 무엇인데, sim에서는 fiber id와 대응됨.
 	void*	pStkTop[MAX_TASK];
 	const char* aszName[MAX_TASK];
+	uint32	anCntSched[MAX_TASK];
 } gstOS;
 
 #if defined(__arm__)
@@ -74,16 +75,13 @@ void os_SetNextTask()
 		}
 	}
 	gstOS._curTID = nNxtTID;
+	gstOS.anCntSched[nNxtTID]++;
 #if defined(__arm__)
 	pCurTCB = &(gstOS._aTCB[nNxtTID]);
 #endif
 
 }
 
-#if defined(__arm__)
-#define STK_SIZE		(1024)
-static uint32 aStk[5][STK_SIZE / 4];
-#endif
 
 uint8 OS_CreateTask(Task pfEntry, void* pStkTop, void* nParam, const char* szName)
 {
@@ -94,11 +92,7 @@ uint8 OS_CreateTask(Task pfEntry, void* pStkTop, void* nParam, const char* szNam
 	gstOS._pfTask[nTaskID] = pfEntry;
 	gstOS._pParam[nTaskID] = nParam;
 	gstOS.aszName[nTaskID] = szName;
-	if((nullptr == pStkTop) && (nTaskID > 0))
-	{
-		memset(aStk[nTaskID-1], 0xCD, sizeof(aStk[nTaskID]));
-		gstOS.pStkTop[nTaskID] = aStk[nTaskID] - 1;
-	}
+	gstOS.pStkTop[nTaskID] = (uint32*)pStkTop - 1;
 	gstOS._numTask++;
 	return nTaskID;
 }

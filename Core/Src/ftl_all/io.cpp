@@ -67,9 +67,36 @@ void io_Print(CmdInfo* pCmd)
 }
 
 #if (EN_DUMMY_NFC == 1)
+
+uint32 gaSpare[PBLK_PER_DIE][NUM_WL][BYTE_PER_SPARE / 4];
+uint32 anAcc[3];
 void NFC_MyIssue(CmdInfo* pCmd)
 {
 	io_Print(pCmd);
+
+	switch (pCmd->eCmd)
+	{
+		case NC_READ:
+		{
+			uint8* pSpare = BM_GetSpare(pCmd->stPgm.anBufId[0]);
+			memcpy(pSpare, gaSpare[pCmd->anBBN[0]][pCmd->nWL], BYTE_PER_SPARE);
+			anAcc[0]++;
+			break;
+		}
+		case NC_PGM:
+		{
+			uint8* pSpare = BM_GetSpare(pCmd->stPgm.anBufId[0]);
+			memcpy(gaSpare[pCmd->anBBN[0]][pCmd->nWL], pSpare, BYTE_PER_SPARE);
+			anAcc[1]++;
+			break;
+		}
+		case NC_ERB:
+		{
+			memset(gaSpare[pCmd->anBBN[0]], 0x0, sizeof(NUM_WL * BYTE_PER_SPARE));
+			anAcc[2]++;
+			break;
+		}
+	}
 
 	uint8 nId = pCmd - gaCmds;
 	uint8 nTag = gaKeys[nId];

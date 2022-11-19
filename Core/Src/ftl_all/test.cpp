@@ -11,6 +11,8 @@
 #include "ftl.h"
 #include "test.h"
 
+#include <stdio.h>
+
 #define PRINTF			SIM_Print
 #define CMD_PRINTF		// SIM_Print
 
@@ -18,6 +20,8 @@
 static uint32* gaDict;
 #endif
 static bool gbDone;
+
+extern int __io_putchar(int ch);
 
 #if (EN_COMPARE == 1)
 void _FillData(uint16 nBuf, uint32 nLPN)
@@ -203,7 +207,8 @@ void sc_Long()
 			tc_SeqWrite(0, nNumUserLPN);
 		}
 		tc_SeqRead(0, nNumUserLPN);
-		while(true)
+		uint32 nCnt = 3;
+		while(nCnt-- > 0)
 		{
 			for (uint32 nLoop = 0; nLoop < 10; nLoop++)
 			{
@@ -235,6 +240,57 @@ void sc_Short()
 
 	PRINTF("Test Done: %s\n", __FUNCTION__);
 }
+
+#include "stm32f1xx_hal.h"
+inline void InitTick()
+{
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	DWT->CYCCNT = 0;
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+inline uint32_t GetTick(bool bReset)
+{
+	uint32_t nCnt = DWT->CYCCNT;
+	if(bReset)
+	{
+		DWT->CYCCNT = 0;
+	}
+	return nCnt;
+}
+
+void myputs(char* szLine);
+
+void sc_Test()
+{
+    uint32 nNumUserLPN = FTL_GetNumLPN(_CmdDone);
+    int32 nTick;
+    char aBuf[32];
+
+    InitTick();
+    for(uint32 i = 0; i < 640; i++)
+    {
+    	tc_SeqWrite(0, nNumUserLPN);
+    }
+    nTick = GetTick(false);
+    sprintf(aBuf, "SW:%d for %d\n", nNumUserLPN * 640, nTick);
+    myputs(aBuf);
+
+    GetTick(true);
+    tc_SeqRead(0, nNumUserLPN);
+    nTick = GetTick(false);
+    sprintf(aBuf, "SW: %d\n", nTick);
+    myputs(aBuf);
+
+    GetTick(true);
+    tc_RandRead(0, nNumUserLPN, nNumUserLPN);
+    nTick = GetTick(false);
+    sprintf(aBuf, "SW: %d\n", nTick);
+    myputs(aBuf);
+
+    GetTick(true);
+    tc_RandWrite(0, nNumUserLPN, nNumUserLPN);
+}
+
 /**
 Workload 생성역할.
 */
@@ -250,7 +306,8 @@ void TEST_Main(void* pParam)
 #endif
 	do
 	{
-		sc_Short();
+		sc_Test();
+		while(1);
 	} while (EN_WORK_GEN);
 #if (EN_WORK_GEN == 0)
 	tc_Shutdown((SIM_GetRand(10) < 5) ? SD_Sudden : SD_Safe);

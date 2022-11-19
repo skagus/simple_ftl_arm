@@ -102,8 +102,6 @@ void gc_Move_OS(uint16 nDstBN, uint16 nDstWL)
 	CmdInfo* apReadRun[MAX_GC_READ];
 	MEMSET_ARRAY(apReadRun, 0x0);
 
-	ASSERT(EN_DUMMY_NFC == 0);
-
 	while (bRun)
 	{
 		////////////// Process done command. ///////////////
@@ -296,9 +294,13 @@ void GC_BlkErase_OS(OpenType eOpen, uint16 nBN)
 	META_ReqSave(true);
 }
 
+#define STK_DW_SIZE		(128)
+static uint32 aGcStk[STK_DW_SIZE];
+
 void GC_Init()
 {
 	gstFreePool.Init();
-	OS_CreateTask(gc_Run, nullptr, nullptr, "gc");
+	memset(aGcStk, 0xCD, sizeof(aGcStk));
+	OS_CreateTask(gc_Run, aGcStk + STK_DW_SIZE, nullptr, "gc");
 }
 

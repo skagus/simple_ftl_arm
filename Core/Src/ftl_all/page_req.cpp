@@ -36,12 +36,12 @@ void req_Done(NCmd eCmd, uint32 nTag)
 	ReqInfo* pReq = pRun->pReq;
 	uint32* pnVal = (uint32*)BM_GetSpare(pReq->nBuf);
 	pRun->nDone++;
-#if (EN_COMPARE == 1)
+
 	if (MARK_ERS != *pnVal)
 	{
 		ASSERT(pReq->nLPN == *pnVal);
 	}
-#endif
+
 	// Calls CPU_WORK cpu function --> treat as ISR.
 	if (pRun->nDone == pRun->nTotal)
 	{
@@ -210,6 +210,11 @@ void reqResp_Run(void* pParam)
 	}
 }
 
+#define STK_DW_SIZE_REQ		(90)
+static uint32 aReqStk[STK_DW_SIZE_REQ];
+#define STK_DW_SIZE_RSP		(64)
+static uint32 aRespStk[STK_DW_SIZE_RSP];
+
 void REQ_Init()
 {
 	gstReqInfoPool.Init();
@@ -217,7 +222,8 @@ void REQ_Init()
 	{
 		gstReqInfoPool.PushTail(nIdx);
 	}
-
-	OS_CreateTask(req_Run, nullptr, nullptr, "req");
-	OS_CreateTask(reqResp_Run, nullptr, nullptr, "req_resp");
+	memset(aReqStk, 0xCD, sizeof(aReqStk));
+	memset(aRespStk, 0xCD, sizeof(aRespStk));
+	OS_CreateTask(req_Run, aReqStk + STK_DW_SIZE_REQ, nullptr, "req");
+	OS_CreateTask(reqResp_Run, aRespStk + STK_DW_SIZE_RSP, nullptr, "req_resp");
 }

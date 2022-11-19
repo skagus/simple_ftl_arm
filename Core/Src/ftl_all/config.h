@@ -12,7 +12,7 @@
 #define BYTE_PER_SPARE		(8)		///< Chunk 당 spare크기.
 
 #define NUM_PLN				(1)
-#define NUM_WL				(32)
+#define NUM_WL				(16)
 #define PBLK_PER_DIE		(32)
 #define NUM_DIE				(1)
 

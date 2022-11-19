@@ -157,10 +157,12 @@ JnlRet META_Update(uint32 nLPN, VAddr stNew, OpenType eOpen, bool bOnOpen)
 		}
 		MAP_PRINTF("[MAP] %X --> {%X,%X}\n", nLPN, stNew.nBN, stNew.nWL);
 	}
+#if defined(EN_SIM)
 	if (false == bOnOpen)
 	{
 		dbg_MapIntegrity();
 	}
+#endif
 	return eJRet;
 }
 
@@ -662,6 +664,9 @@ uint32 META_ReqSave(bool bSync)
 	return gstMetaCtx.nAge;
 }
 
+#define STK_DW_SIZE		(64)
+static uint32 aMtStk[STK_DW_SIZE];
+
 void META_Init()
 {
 	gbReady = false;
@@ -671,5 +676,6 @@ void META_Init()
 	MEMSET_ARRAY(gstMeta.astBI, 0);
 	MEMSET_ARRAY(gstMeta.astL2P, 0xFF);
 	MEMSET_OBJ(gstMetaCtx, 0);
-	OS_CreateTask(meta_Run, nullptr, nullptr, "meta");
+	memset(aMtStk, 0xCD, sizeof(aMtStk));
+	OS_CreateTask(meta_Run, aMtStk + STK_DW_SIZE, nullptr, "meta");
 }

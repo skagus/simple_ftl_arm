@@ -46,14 +46,15 @@ void FTL_Main(void* pParam)
 	OS_Init();
 
 	gstReqQ.Init();
-	IO_Init();
-	REQ_Init();
-	META_Init();
-	GC_Init();
 #if (EN_WORK_GEN == 1)
 #include "test.h"
 	TEST_Init();
 #endif
+	IO_Init();
+	REQ_Init();
+	META_Init();
+	GC_Init();
+
 	PRINTF("[FTL] Init done\n");
 	OS_Start();
 }
