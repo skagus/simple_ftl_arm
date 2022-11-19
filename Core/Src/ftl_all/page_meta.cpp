@@ -5,7 +5,7 @@
 #include "macro.h"
 #include "buf.h"
 
-#include "os.h"
+#include "scheduler.h"
 #include "io.h"
 #include "page_gc.h"
 #include "page_meta.h"
@@ -20,9 +20,36 @@ bool gbRequest;
 OpenBlk gaOpen[NUM_OPEN];
 MetaCtx gstMetaCtx;
 JnlSet gstJnlSet;
-bool gbReady;
+
+struct MtSaveStk
+{
+	enum MtSaveStep
+	{
+		Init,
+		Erase,
+		Program,
+		Done,
+	};
+	MtSaveStep eStep;
+	uint8 nIssue;	///< count of issued NAND operation.
+	uint8 nDone;	///< count of done NAND operation.
+};
 
 
+
+struct MtStk
+{
+	enum MtStep
+	{
+		Mt_Init,
+		Mt_Open,		///< In openning.
+		Mt_Format,	///< In formatting.
+		Mt_Ready,
+		Mt_Saving,
+	};
+	MtStep eStep;
+};
+MtStk* gpMtStk;
 
 void open_PostMtLoad();
 
@@ -32,19 +59,53 @@ uint16 meta_MtBlk2PBN(uint16 nMetaBN)
 	return nMetaBN + BASE_META_BLK;
 }
 
-
-void meta_Format()
+struct FmtCtx
 {
-	for (uint16 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
+	enum Step
 	{
-		gstMeta.astBI[nIdx].eState = BS_Closed;
-		gstMeta.astBI[nIdx].nVPC = 0;
+		Memset,
+		Save,
+		Done,
+	};
+	Step eStep;
+};
+bool meta_Format(FmtCtx* pFmtCtx, bool b1st)
+{
+	bool bRet = false;
+
+	if (b1st)
+	{
+		pFmtCtx->eStep = FmtCtx::Memset;
 	}
-	gstMetaCtx.nNextWL = 0;
-	gstMetaCtx.nAge = 1;
-	gstMetaCtx.nCurBO = 0;
-	gstMetaCtx.nNextSlice = 0;
-	// TODO: Map save sequence.
+	switch (pFmtCtx->eStep)
+	{
+		case FmtCtx::Memset:
+		{
+			for (uint16 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
+			{
+				gstMeta.astBI[nIdx].eState = BS_Closed;
+				gstMeta.astBI[nIdx].nVPC = 0;
+			}
+			pFmtCtx->eStep = FmtCtx::Done;
+			bRet = true;
+			gstMetaCtx.nNextWL = 0;
+			gstMetaCtx.nAge = 1;
+			gstMetaCtx.nCurBO = 0;
+			gstMetaCtx.nNextSlice = 0;
+			break;
+		}
+		case FmtCtx::Save:
+		{
+			// TODO: Map save.
+			bRet = true;
+			break;
+		}
+		default:
+		{
+			assert(false);
+		}
+	}
+	return bRet;
 }
 
 void dbg_MapIntegrity()
@@ -66,7 +127,7 @@ void dbg_MapIntegrity()
 
 bool META_Ready()
 {
-	return gbReady;
+	return (gpMtStk->eStep == MtStk::Mt_Ready);
 }
 
 VAddr META_GetMap(uint32 nLPN)
@@ -157,10 +218,12 @@ JnlRet META_Update(uint32 nLPN, VAddr stNew, OpenType eOpen, bool bOnOpen)
 		}
 		MAP_PRINTF("[MAP] %X --> {%X,%X}\n", nLPN, stNew.nBN, stNew.nWL);
 	}
+#if defined(EN_SIM)
 	if (false == bOnOpen)
 	{
 		dbg_MapIntegrity();
 	}
+#endif
 	return eJRet;
 }
 
@@ -195,199 +258,268 @@ OpenBlk* META_GetOpen(OpenType eOpen)
 	return gaOpen + eOpen;
 }
 
-void meta_Save_OS()
+
+
+bool meta_Save_SM(MtSaveStk* pCtx)
 {
-	if (0 == gstMetaCtx.nNextWL)
+	if (MtSaveStk::Init == pCtx->eStep)
 	{
-		gstMetaCtx.nCurBN = meta_MtBlk2PBN(gstMetaCtx.nCurBO);
-		PRINTF("[MT] ERS BO:%X, BN:%X\n", gstMetaCtx.nCurBO, gstMetaCtx.nCurBN);
-		CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
-		IO_Erase(pCmd, gstMetaCtx.nCurBN, 0);
-		while (nullptr == (pCmd = IO_PopDone(IOCB_Meta)))
-		{
-			OS_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
-		}
-		IO_Free(pCmd);
-	}
+		pCtx->nIssue = 0;
+		pCtx->nDone = 0;
 
-	uint32 nIssue = 0;
-	for (nIssue = 0; nIssue < PAGE_PER_META; nIssue++)
-	{
-		uint16 nBuf = BM_Alloc();
-		uint32* pSpare = (uint32*)BM_GetSpare(nBuf);
-		pSpare[0] = gstMetaCtx.nAge;
-		pSpare[1] = gstMetaCtx.nNextSlice;
-		uint8* pDst = BM_GetMain(nBuf);
-		if (0 == nIssue)
+		if (0 == gstMetaCtx.nNextWL)
 		{
-			memcpy(pDst, &gstJnlSet, sizeof(gstJnlSet));
-			pDst += sizeof(gstJnlSet);
-			uint8* pSrc = (uint8*)(&gstMeta) + (gstMetaCtx.nNextSlice * SIZE_MAP_PER_SAVE);
-			memcpy(pDst, pSrc, SIZE_MAP_PER_SAVE);
+			pCtx->eStep = MtSaveStk::Erase;
 		}
-
-		uint16 nWL = gstMetaCtx.nNextWL + nIssue;
-		CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
-		PRINTF("[MT:%X] \t==== PGM (%X,%X) Age:%X, Slice: %X ====\n", pCmd->nDbgSN, gstMetaCtx.nCurBN, nWL, gstMetaCtx.nAge, gstMetaCtx.nNextSlice);
-		IO_Program(pCmd, gstMetaCtx.nCurBN, nWL, nBuf, 0);
-	}
-
-	while (true)
-	{
-		CmdInfo* pDone;
-		while (pDone = IO_PopDone(IOCB_Meta))
+		else
 		{
-			BM_Free(pDone->stPgm.anBufId[0]);
-			IO_Free(pDone);
-			nIssue--;
-		}
-		if (nIssue == 0)
-		{
-			break;
-		}
-		OS_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
-	}
-
-	gstMetaCtx.nAge++;
-	gstMetaCtx.nNextSlice++;
-	if (gstMetaCtx.nNextSlice >= NUM_MAP_SLICE)
-	{
-		gstMetaCtx.nNextSlice = 0;
-	}
-	gstMetaCtx.nNextWL += PAGE_PER_META;
-	if (gstMetaCtx.nNextWL >= NUM_WL)
-	{
-		gstMetaCtx.nNextWL = 0;
-		gstMetaCtx.nCurBO++;
-		if (gstMetaCtx.nCurBO >= NUM_META_BLK)
-		{
-			gstMetaCtx.nCurBO = 0;
+			pCtx->eStep = MtSaveStk::Program;
 		}
 	}
-}
 
-// =========================================
-void open_UserScan_OS(OpenType eOpen)
-{
-	OpenBlk* pOpen = META_GetOpen(eOpen);
-	uint16 nBN = pOpen->stNextVA.nBN;
-	uint16 nNextWL = pOpen->stNextVA.nWL;
-	uint16 nErasedWL = FF16;
-	uint8 nRun = 0;
-	bool bRun = true;
-	PRINTF("[OPEN] Data scan %s {%X,%X}\n", eOpen == OpenType::OPEN_GC ? "GC" : "User", nBN, nNextWL);
-
-	while (bRun)
+	bool bRet = false;
+	CmdInfo* pDone;
+	while (pDone = IO_PopDone(IOCB_Meta))
 	{
-		CmdInfo* pDone;
-		if (nullptr != (pDone = IO_PopDone(CbKey::IOCB_Meta)))
+		pCtx->nDone++;
+		if (NC_ERB == pDone->eCmd)
 		{
-			nRun--;
-			uint16 nBuf = pDone->stRead.anBufId[0];
-			uint32* pnSpare = (uint32*)BM_GetSpare(nBuf);
-			uint16 nWL = pDone->nTag;
-
-			if (MARK_ERS != *pnSpare)
+			ASSERT(MtSaveStk::Erase == pCtx->eStep);
+			pCtx->nIssue = 0;
+			pCtx->nDone = 0;
+			pCtx->eStep = MtSaveStk::Program;
+		}
+		else // PGM done.
+		{
+			if (PAGE_PER_META == pCtx->nDone)
 			{
-				uint32 nLPN = *pnSpare;
-				VAddr stCur(0, pDone->anBBN[0], pDone->nWL);
-				PRINTF("[SCAN] MapUpdate: LPN:%X to (%X, %X), %c\n",
-					*pnSpare, pDone->anBBN[0], pDone->nWL, eOpen == OPEN_GC ? 'G' : 'U');
-				if (JR_Filled == META_Update(*pnSpare, stCur, eOpen))
+				gstMetaCtx.nAge++;
+				gstMetaCtx.nNextSlice++;
+				if (gstMetaCtx.nNextSlice >= NUM_MAP_SLICE)
 				{
-					META_ReqSave(false);
+					gstMetaCtx.nNextSlice = 0;
 				}
+				gstMetaCtx.nNextWL += PAGE_PER_META;
+				if (gstMetaCtx.nNextWL >= NUM_WL)
+				{
+					gstMetaCtx.nNextWL = 0;
+					gstMetaCtx.nCurBO++;
+					if (gstMetaCtx.nCurBO >= NUM_META_BLK)
+					{
+						gstMetaCtx.nCurBO = 0;
+					}
+				}
+				pCtx->eStep = MtSaveStk::Done;
+				bRet = true;
 			}
-			else if (FF16 == nErasedWL)
-			{
-				PRINTF("[SCAN] Erased detect: (%X, %X), %c\n",
-					pDone->anBBN[0], pDone->nWL, eOpen == OPEN_GC ? 'G' : 'U');
-				nErasedWL = pDone->nWL;
-			}
-			BM_Free(nBuf);
-			IO_Free(pDone);
+			BM_Free(pDone->stPgm.anBufId[0]);
 		}
-
-		while ((FF16 == nErasedWL) && (nNextWL < NUM_WL) && (nRun < 2))
+		IO_Free(pDone);
+	}
+	
+	CmdInfo* pCmd;
+	if (MtSaveStk::Erase == pCtx->eStep)
+	{
+		if (0 == pCtx->nIssue)
+		{
+			gstMetaCtx.nCurBN = meta_MtBlk2PBN(gstMetaCtx.nCurBO);
+			PRINTF("[MT] ERS BO:%X, BN:%X\n", gstMetaCtx.nCurBO, gstMetaCtx.nCurBN);
+			pCmd = IO_Alloc(IOCB_Meta);
+			IO_Erase(pCmd, gstMetaCtx.nCurBN, 0);
+			pCtx->nIssue++;
+		}
+	}
+	else if (MtSaveStk::Program == pCtx->eStep)
+	{
+		if (PAGE_PER_META > pCtx->nIssue)
 		{
 			uint16 nBuf = BM_Alloc();
-			CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
-			IO_Read(pCmd, nBN, nNextWL, nBuf, nNextWL);
-			nNextWL++;
-			nRun++;
-		}
-
-		if (nRun > 0)
-		{
-			OS_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
-		}
-		else if ((nNextWL >= NUM_WL) || (FF16 != nErasedWL)) // All done.
-		{
-			OpenBlk* pOpen = META_GetOpen(eOpen);
-			if (FF16 != nErasedWL)
+			uint32* pSpare = (uint32*)BM_GetSpare(nBuf);
+			pSpare[0] = gstMetaCtx.nAge;
+			pSpare[1] = gstMetaCtx.nNextSlice;
+			uint8* pDst = BM_GetMain(nBuf);
+			if (0 == pCtx->nIssue)
 			{
-				pOpen->stNextVA.nWL = nErasedWL;
+				memcpy(pDst, &gstJnlSet, sizeof(gstJnlSet));
+				pDst += sizeof(gstJnlSet);
+				uint8* pSrc = (uint8*)(&gstMeta) + (gstMetaCtx.nNextSlice * SIZE_MAP_PER_SAVE);
+				memcpy(pDst, pSrc, SIZE_MAP_PER_SAVE);
 			}
 			else
 			{
-				pOpen->stNextVA.nWL = NUM_WL;
+				assert(false);
 			}
-			bRun = false;
+
+			uint16 nWL = gstMetaCtx.nNextWL + pCtx->nIssue;
+			pCmd = IO_Alloc(IOCB_Meta);
+			IO_Program(pCmd, gstMetaCtx.nCurBN, nWL, nBuf, 0);
+			PRINTF("[MT%X] \t==== PGM (%X,%X) Age:%X, Slice: %X\n", pCmd->nDbgSN, gstMetaCtx.nCurBN, nWL, gstMetaCtx.nAge, gstMetaCtx.nNextSlice);
+			pCtx->nIssue++;
 		}
 	}
+	if (pCtx->nIssue > pCtx->nDone)
+	{
+		Sched_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
+	}
+
+	return bRet;
+}
+// =========================================
+struct DataScanStk
+{
+	enum ScanState
+	{
+		Init,
+		Run,
+	};
+	ScanState eState;
+	OpenType eOpen;
+	uint16 nBN;
+	uint16 nNextWL;
+	uint16 nErasedWL;
+	uint16 nRun;		///< Count of running nand command.
+};
+
+bool open_UserScan_SM(DataScanStk* pCtx)
+{
+	bool bRet = false;
+	if (DataScanStk::Init == pCtx->eState)
+	{
+		OpenBlk* pOpen = META_GetOpen(pCtx->eOpen);
+		pCtx->eState = DataScanStk::Run;
+		pCtx->nRun = 0;
+		pCtx->nErasedWL = FF16;
+		pCtx->nBN = pOpen->stNextVA.nBN;
+		pCtx->nNextWL = pOpen->stNextVA.nWL;
+		pCtx->nErasedWL = FF16;
+	}
+
+	CmdInfo* pDone;
+	if (nullptr != (pDone = IO_PopDone(CbKey::IOCB_Meta)))
+	{
+		pCtx->nRun--;
+		uint16 nBuf = pDone->stRead.anBufId[0];
+		uint32* pnSpare = (uint32*)BM_GetSpare(nBuf);
+
+		if (MARK_ERS != *pnSpare)
+		{
+			uint32 nLPN = *pnSpare;
+			VAddr stCur(0, pDone->anBBN[0], pDone->nWL);
+			PRINTF("[SCAN] MapUpdate: LPN:%X to (%X, %X), %c\n",
+				*pnSpare, pDone->anBBN[0], pDone->nWL, pCtx->eOpen == OPEN_GC ? 'G' : 'U');
+			META_Update(*pnSpare, stCur, pCtx->eOpen);
+		}
+		else if (FF16 == pCtx->nErasedWL)
+		{
+			PRINTF("[SCAN] Erased detect: (%X, %X), %c\n",
+				pDone->anBBN[0], pDone->nWL, pCtx->eOpen == OPEN_GC ? 'G' : 'U');
+			pCtx->nErasedWL = pDone->nWL;
+		}
+		BM_Free(nBuf);
+		IO_Free(pDone);
+	}
+
+	while ((FF16 == pCtx->nErasedWL) && (pCtx->nNextWL < NUM_WL) && (pCtx->nRun < 2))
+	{
+		uint16 nBuf = BM_Alloc();
+		CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
+		IO_Read(pCmd, pCtx->nBN, pCtx->nNextWL, nBuf, pCtx->nNextWL);
+		pCtx->nNextWL++;
+		pCtx->nRun++;
+	}
+
+	if (pCtx->nRun > 0)
+	{
+		Sched_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
+	}
+	else if ((pCtx->nNextWL >= NUM_WL) || (FF16 != pCtx->nErasedWL)) // All done.
+	{
+		OpenBlk* pOpen = META_GetOpen(pCtx->eOpen);
+		if (FF16 != pCtx->nErasedWL)
+		{
+			pOpen->stNextVA.nWL = pCtx->nErasedWL;
+		}
+		else
+		{
+			pOpen->stNextVA.nWL = NUM_WL;
+		}
+		bRet = true;
+	}
+	return bRet;
 }
 
 // =================== Meta Page Scan ========================
-uint16 open_PageScan_OS(uint16 nBN)
+struct MtPgStk
 {
-	uint16 nIssued = 0;
-	uint16 nCPO = NUM_WL;
-	uint8 nDone = 0;
-	while (true)
+	enum State
 	{
-		CmdInfo* pDone;
-		while (nullptr != (pDone = IO_PopDone(CbKey::IOCB_Meta)))
-		{
-			nDone++;
-			uint16 nBuf = pDone->stRead.anBufId[0];
-			uint32* pnSpare = (uint32*)BM_GetSpare(nBuf);
-			PRINTF("[OPEN] PageScan (%X,%X) -> Age:%X, Slice:%X\n",
-				pDone->anBBN[0], pDone->nWL, pnSpare[0], pnSpare[1]);
-			if (MARK_ERS != *pnSpare)
-			{
-				ASSERT(NUM_WL == nCPO);
-				gstMetaCtx.nAge = pnSpare[0];
-				gstMetaCtx.nNextSlice = (pnSpare[1] + NUM_MAP_SLICE + 1) % NUM_MAP_SLICE;
-			}
-			else if (NUM_WL == nCPO)
-			{
-				nCPO = pDone->nTag * PAGE_PER_META;
-			}
-			BM_Free(nBuf);
-			IO_Free(pDone);
-		}
-		
-		while ((NUM_WL == nCPO)
-			&& (nIssued < NUM_WL / PAGE_PER_META)
-			&& ((nIssued - nDone) < 2))
-		{
-			uint16 nWL = nIssued * PAGE_PER_META;
-			uint16 nBuf = BM_Alloc();
-			CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
-			IO_Read(pCmd, nBN, nWL, nBuf, nIssued);
-			nIssued++;
-		}
-		if (nIssued > nDone)
-		{
-			OS_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
-		}
-		else if ((nCPO != NUM_WL) || (nDone >= NUM_WL / PAGE_PER_META))
-		{
-			PRINTF("[OPEN] Clean MtPage (%X,%X))\n", nBN, nCPO);
-			break;
-		}
+		Init,
+		Run,
+	};
+	State eState;
+	uint16 nMaxBO;	// Input
+	uint16 nMaxBN;	// == meta_MtBlk2PBN(nMaxBO)
+	uint16 nCPO;	// Output.
+	uint16 nIssued;	// Internal.
+	uint16 nDone;	// Internal.
+};
+
+bool open_PageScan_SM(MtPgStk* pCtx)
+{
+	bool bRet = false;
+	if (MtPgStk::Init == pCtx->eState)
+	{
+		pCtx->nCPO = NUM_WL;
+		pCtx->nIssued = 0;
+		pCtx->nDone = 0;
+		pCtx->eState = MtPgStk::Run;
 	}
-	return nCPO;
+
+	// Check phase.
+	CmdInfo* pDone;
+	while (nullptr != (pDone = IO_PopDone(CbKey::IOCB_Meta)))
+	{
+		pCtx->nDone++;
+		uint16 nBuf = pDone->stRead.anBufId[0];
+		uint32* pnSpare = (uint32*)BM_GetSpare(nBuf);
+		PRINTF("[OPEN] PageScan (%X,%X) -> Age:%X, Slice:%X\n",
+			pDone->anBBN[0], pDone->nWL, pnSpare[0], pnSpare[1]);
+		if (MARK_ERS != *pnSpare)
+		{
+			ASSERT(NUM_WL == pCtx->nCPO);
+			gstMetaCtx.nAge = pnSpare[0];
+			gstMetaCtx.nNextSlice = (pnSpare[1] + NUM_MAP_SLICE + 1) % NUM_MAP_SLICE;
+		}
+		else if (NUM_WL == pCtx->nCPO)
+		{
+			pCtx->nCPO = pDone->nTag * PAGE_PER_META;
+		}
+		BM_Free(nBuf);
+		IO_Free(pDone);
+	}
+
+	while ((NUM_WL == pCtx->nCPO)
+		&& (pCtx->nIssued < NUM_WL / PAGE_PER_META)
+		&& ((pCtx->nIssued - pCtx->nDone) < 2))
+	{
+		uint16 nWL = pCtx->nIssued * PAGE_PER_META;
+		uint16 nBuf = BM_Alloc();
+		CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
+		IO_Read(pCmd, pCtx->nMaxBN, nWL, nBuf, pCtx->nIssued);
+		pCtx->nIssued++;
+	}
+
+	if (pCtx->nIssued > pCtx->nDone)
+	{
+		Sched_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
+	}
+	else if (((pCtx->nCPO != NUM_WL) || (pCtx->nDone >= NUM_WL / PAGE_PER_META)))
+	{
+		PRINTF("[OPEN] Clean MtPage (%X,%X))\n", pCtx->nMaxBN, pCtx->nCPO);
+		bRet = true;
+	}
+
+	return bRet;
 }
 
 void open_ReplayJnl(JnlSet* pJnlSet, uint32 nAge)
@@ -437,161 +569,275 @@ void open_ReplayJnl(JnlSet* pJnlSet, uint32 nAge)
 	}
 }
 
-void open_MtLoad_OS(uint16 nMaxBO, uint16 nCPO)
+bool open_MtLoad_SM(MtPgStk* pCtx)
 {
-	uint16 nStartWL;
-	if (nCPO >= NUM_MAP_SLICE)
+	bool bRet = false;
+	if (MtPgStk::Init == pCtx->eState)
 	{
-		nStartWL = nCPO - NUM_MAP_SLICE;
+		if (pCtx->nCPO >= NUM_MAP_SLICE)
+		{
+			pCtx->nCPO -= NUM_MAP_SLICE;
+		}
+		else
+		{
+			pCtx->nCPO = (pCtx->nCPO + NUM_WL - NUM_MAP_SLICE) % NUM_WL;
+			pCtx->nMaxBO = (pCtx->nMaxBO + NUM_META_BLK - 1) % NUM_META_BLK;
+			pCtx->nMaxBN = meta_MtBlk2PBN(pCtx->nMaxBO);
+		}
+		pCtx->nIssued = 0;
+		pCtx->nDone = 0;
+		pCtx->eState = MtPgStk::Run;
+		MEMSET_OBJ(gstMeta, 0xFF);	// initialize as FF32;
 	}
-	else
+
+	// Check phase.
+	CmdInfo* pDone;
+	while (nullptr != (pDone = IO_PopDone(CbKey::IOCB_Meta)))
 	{
-		nStartWL = (nCPO + NUM_WL - NUM_MAP_SLICE) % NUM_WL;
-		nMaxBO = (nMaxBO + NUM_META_BLK - 1) % NUM_META_BLK;
+		pCtx->nDone++;
+		uint16 nBuf = pDone->stRead.anBufId[0];
+		uint8* pMain = BM_GetMain(nBuf);
+		uint32* pSpare = (uint32*)BM_GetSpare(nBuf);
+		uint32 nSlice = pSpare[1];
+		PRINTF("[OPEN] Mt Loaded {%X,%X} (%d,%d)\n", pDone->anBBN[0], pDone->nWL, pSpare[0], pSpare[1]);
+		ASSERT(nSlice < NUM_MAP_SLICE);
+		open_ReplayJnl((JnlSet*)pMain, pSpare[0]);
+		uint8* pSrc = pMain + sizeof(JnlSet);
+		uint8* pDst = (uint8*)(&gstMeta) + (nSlice * SIZE_MAP_PER_SAVE);
+		uint32 nSize = SIZE_MAP_PER_SAVE;
+		if (nSlice >= (NUM_MAP_SLICE - 1))
+		{
+			nSize = sizeof(gstMeta) - (nSlice * SIZE_MAP_PER_SAVE);
+		}
+		memcpy(pDst, pSrc, nSize);
+		BM_Free(nBuf);
+		IO_Free(pDone);
 	}
-	uint16 nMaxBN = meta_MtBlk2PBN(nMaxBO);
 
-	uint8 nIssued = 0;
-	uint8 nDone = 0;
-	MEMSET_OBJ(gstMeta, 0xFF);	// initialize as FF32;
-	while (true)
+	while ((pCtx->nIssued < NUM_MAP_SLICE) && (pCtx->nIssued - pCtx->nDone < 2))
 	{
-		// Check phase.
-		CmdInfo* pDone;
-		while (nullptr != (pDone = IO_PopDone(CbKey::IOCB_Meta)))
+		uint16 nWL = pCtx->nCPO + pCtx->nIssued;
+		uint16 nBN = pCtx->nMaxBN;
+		if (nWL >= NUM_WL)
 		{
-			nDone++;
-			uint16 nBuf = pDone->stRead.anBufId[0];
-			uint8* pMain = BM_GetMain(nBuf);
-			uint32* pSpare = (uint32*)BM_GetSpare(nBuf);
-			uint32 nSlice = pSpare[1];
-			PRINTF("[OPEN] Mt Loaded {%X,%X} (%d,%d)\n", pDone->anBBN[0], pDone->nWL, pSpare[0], pSpare[1]);
-			ASSERT(nSlice < NUM_MAP_SLICE);
-			open_ReplayJnl((JnlSet*)pMain, pSpare[0]);
-			uint8* pSrc = pMain + sizeof(JnlSet);
-			uint8* pDst = (uint8*)(&gstMeta) + (nSlice * SIZE_MAP_PER_SAVE);
-			uint32 nSize = SIZE_MAP_PER_SAVE;
-			if (nSlice >= (NUM_MAP_SLICE - 1))
-			{
-				nSize = sizeof(gstMeta) - (nSlice * SIZE_MAP_PER_SAVE);
-			}
-			memcpy(pDst, pSrc, nSize);
-			BM_Free(nBuf);
-			IO_Free(pDone);
+			nWL = nWL % NUM_WL;
+			nBN = meta_MtBlk2PBN((pCtx->nMaxBO + 1) % NUM_META_BLK);
 		}
-
-		while ((nIssued < NUM_MAP_SLICE) && (nIssued - nDone < 2))
-		{
-			uint16 nWL = nStartWL + nIssued;
-			uint16 nBN = nMaxBN;
-			if (nWL >= NUM_WL)
-			{
-				nWL = nWL % NUM_WL;
-				nBN = meta_MtBlk2PBN((nMaxBO + 1) % NUM_META_BLK);
-			}
-			uint16 nBuf = BM_Alloc();
-			CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
-			IO_Read(pCmd, nBN, nWL, nBuf, nIssued);
-			nIssued++;
-		}
-
-		if (nDone >= NUM_MAP_SLICE)
-		{
-			break;
-		}
-		else if (nIssued > nDone)
-		{
-			OS_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
-		}
+		uint16 nBuf = BM_Alloc();
+		CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
+		IO_Read(pCmd, nBN, nWL, nBuf, pCtx->nIssued);
+		pCtx->nIssued++;
+		Sched_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
 	}
+
+	if (pCtx->nDone >= NUM_MAP_SLICE)
+	{
+		bRet = true;
+	}
+	else if (pCtx->nIssued > pCtx->nDone)
+	{
+		Sched_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
+	}
+	return bRet;
 }
 
 
 // ========================== Meta Block Scan ====================================
-
-uint16 open_BlkScan_SM()
+struct MtBlkScanStk
 {
-	uint8 nIssued = 0;
-	uint8 nDone = 0;
-	uint16 nMaxBO = FF16;
-	uint32 nMaxAge = 0;
-
-	while (true)
+	enum State
 	{
-		// Issue phase.
-		while ((nIssued < NUM_META_BLK) && ((nIssued - nDone) < 2))
-		{
-			uint16 nBuf = BM_Alloc();
-			CmdInfo* pCmd;
-			uint16 nBN = meta_MtBlk2PBN(nIssued);
-			pCmd = IO_Alloc(IOCB_Meta);
-			IO_Read(pCmd, nBN, 0, nBuf, nIssued);
-			PRINTF("[OPEN] BlkScan Issue %X\n", nIssued);
-			nIssued++;
-		}
-		// Check phase.
-		CmdInfo* pDone;
-		while (nullptr != (pDone = IO_PopDone(CbKey::IOCB_Meta)))
-		{
-			nDone++;
-			uint16 nBuf = pDone->stRead.anBufId[0];
-			uint32* pnSpare = (uint32*)BM_GetSpare(nBuf);
+		Init,
+		Run,
+	};
+	State eState;
+	uint16 nMaxBO;	// for return.
+	uint8 nIssued;
+	uint8 nDone;
+	uint32 nMaxAge;
+};
 
-			PRINTF("[OPEN] BlkScan BO:%2X, SPR:%2X\n", pDone->nTag, *pnSpare);
-
-			if ((*pnSpare > nMaxAge) && (*pnSpare != MARK_ERS))
-			{
-				nMaxAge = *pnSpare;
-				nMaxBO = pDone->nTag;
-			}
-			BM_Free(nBuf);
-			IO_Free(pDone);
-		}
-		if (NUM_META_BLK == nDone)	// All done.
-		{
-			PRINTF("[OPEN] Latest Blk Offset: %X\n", nMaxBO);
-			break;
-		}
-		if (nIssued > nDone)
-		{
-			OS_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
-		}
+bool open_BlkScan_SM(MtBlkScanStk* pCtx)
+{
+	bool bRet = false;
+	if (MtBlkScanStk::Init == pCtx->eState)
+	{
+		pCtx->nMaxBO = INV_BN;
+		pCtx->nIssued = 0;
+		pCtx->nDone = 0;
+		pCtx->nMaxAge = 0;
+		pCtx->eState = MtBlkScanStk::Run;
 	}
-	return nMaxBO;
+	// Issue phase.
+	while ((pCtx->nIssued < NUM_META_BLK) && ((pCtx->nIssued - pCtx->nDone) < 2))
+	{
+		uint16 nBuf = BM_Alloc();
+		CmdInfo* pCmd;
+		uint16 nBN = meta_MtBlk2PBN(pCtx->nIssued);
+		pCmd = IO_Alloc(IOCB_Meta);
+		IO_Read(pCmd, nBN, 0, nBuf, pCtx->nIssued);
+		PRINTF("[OPEN] BlkScan Issue %X\n", pCtx->nIssued);
+		pCtx->nIssued++;
+	}
+	// Check phase.
+	CmdInfo* pDone;
+	while (nullptr != (pDone = IO_PopDone(CbKey::IOCB_Meta)))
+	{
+		pCtx->nDone++;
+		uint16 nBuf = pDone->stRead.anBufId[0];
+		uint32* pnSpare = (uint32*)BM_GetSpare(nBuf);
+
+		PRINTF("[OPEN] BlkScan BO:%2X, SPR:%2X\n", pDone->nTag, *pnSpare);
+
+		if ((*pnSpare > pCtx->nMaxAge) && (*pnSpare != MARK_ERS))
+		{
+			pCtx->nMaxAge = *pnSpare;
+			pCtx->nMaxBO = pDone->nTag;
+		}
+		BM_Free(nBuf);
+		IO_Free(pDone);
+	}
+
+	if (NUM_META_BLK == pCtx->nDone)	// All done.
+	{
+		PRINTF("[OPEN] Latest Blk Offset: %X\n", pCtx->nMaxBO);
+		bRet = true;
+	}
+	else if (pCtx->nIssued > pCtx->nDone)
+	{
+		Sched_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
+	}
+	else
+	{
+		Sched_Yield();
+	}
+
+	return bRet;
 }
 
 
 // =====================================================
 
-/**
-* @return success, if failure format again.
-*/
-bool meta_Open_OS()
+
+struct OpenStk
+{
+	enum MetaStep
+	{
+		Init,
+		BlkScan,
+		PageScan,
+		MtLoad,
+		GcScan,
+		UserScan,
+	};
+	MetaStep eOpenStep;
+	uint16 nMaxBO;	// for return.
+};
+
+bool meta_Open_SM(OpenStk* pCtx)
 {
 	bool bRet = false;
-	uint16 nMaxBO = open_BlkScan_SM();
-	if (FF16 != nMaxBO)
+
+	switch (pCtx->eOpenStep)
 	{
-		gstMetaCtx.nCurBO = nMaxBO;
-		gstMetaCtx.nCurBN = meta_MtBlk2PBN(nMaxBO);
-		gstMetaCtx.nNextWL = open_PageScan_OS(gstMetaCtx.nCurBN);
-		if (gstMetaCtx.nNextWL >= NUM_WL)
+		case OpenStk::Init:
 		{
-			nMaxBO = (nMaxBO + 1) % NUM_META_BLK;
-			gstMetaCtx.nCurBO = nMaxBO;
-			gstMetaCtx.nCurBN = meta_MtBlk2PBN(nMaxBO);
-			gstMetaCtx.nNextWL = 0;
-			PRINTF("[OPEN] Mt Blk boundary {%X,%X}\n", gstMetaCtx.nCurBN, gstMetaCtx.nNextWL);
+			MtBlkScanStk* pChildCtx = (MtBlkScanStk*)(pCtx + 1);
+			pChildCtx->eState = MtBlkScanStk::Init;
+			open_BlkScan_SM(pChildCtx);
+			MEMSET_OBJ(gstMeta, 0xFF);
+			pCtx->nMaxBO = INV_BN;
+			pCtx->eOpenStep = OpenStk::BlkScan;
+			break;
 		}
-		open_MtLoad_OS(nMaxBO, gstMetaCtx.nNextWL);
-		open_PostMtLoad();
+		case OpenStk::BlkScan:
+		{
+			MtBlkScanStk* pChildCtx = (MtBlkScanStk*)(pCtx + 1);
+			if (open_BlkScan_SM(pChildCtx))
+			{
+				pCtx->nMaxBO = pChildCtx->nMaxBO;
+				if (INV_BN != pCtx->nMaxBO)
+				{
+					MtPgStk* pNextChild = (MtPgStk*)(pCtx + 1);
+					pNextChild->nMaxBN = meta_MtBlk2PBN(pCtx->nMaxBO);
+					pNextChild->eState = MtPgStk::Init;
+					open_PageScan_SM(pNextChild);
+					pCtx->eOpenStep = OpenStk::PageScan;
+				}
+				else
+				{	// All done in this function.
+					bRet = true;
+				}
+			}
+			break;
+		}
+		case OpenStk::PageScan:
+		{
+			MtPgStk* pChildCtx = (MtPgStk*)(pCtx + 1);
+			if (open_PageScan_SM(pChildCtx))
+			{
+				if (pChildCtx->nCPO != NUM_WL)
+				{
+					gstMetaCtx.nCurBO = pChildCtx->nMaxBO;
+					gstMetaCtx.nCurBN = meta_MtBlk2PBN(gstMetaCtx.nCurBO);
+					gstMetaCtx.nNextWL = pChildCtx->nCPO;
+				}
+				else
+				{
+					gstMetaCtx.nCurBO = (pChildCtx->nMaxBO + 1) % NUM_META_BLK;
+					gstMetaCtx.nCurBN = meta_MtBlk2PBN(gstMetaCtx.nCurBO);
+					gstMetaCtx.nNextWL = 0;
+					PRINTF("[OPEN] Mt Blk boundary {%X,%X}\n", gstMetaCtx.nCurBN, gstMetaCtx.nNextWL);
+				}
 
-		gstJnlSet.Start(OPEN_USER, 0); // Prepare Jnl to add on data scan.
-		open_UserScan_OS(OPEN_GC);
-		open_UserScan_OS(OPEN_USER);
+				pChildCtx->eState = MtPgStk::Init;
+				open_MtLoad_SM(pChildCtx);
+				pCtx->eOpenStep = OpenStk::MtLoad;
+			}
+			break;
+		}
+		case OpenStk::MtLoad:
+		{
+			MtPgStk* pChildCtx = (MtPgStk*)(pCtx + 1);
+			if (open_MtLoad_SM(pChildCtx))
+			{
+				open_PostMtLoad();
+				gstJnlSet.Start(OPEN_USER, 0);
+				DataScanStk* pNextChild = (DataScanStk*)(pCtx + 1);
+				pNextChild->eState = DataScanStk::Init;
+				pNextChild->eOpen = OpenType::OPEN_GC;
+				if (true == open_UserScan_SM(pNextChild))
+				{
+					Sched_Yield(); // No scan target.
+				}
+				pCtx->eOpenStep = OpenStk::GcScan;
+			}
+			break;
+		}
+		case OpenStk::GcScan:
+		{
+			if (open_UserScan_SM((DataScanStk*)(pCtx + 1)))
+			{
+				DataScanStk* pNextChild = (DataScanStk*)(pCtx + 1);
+				pNextChild->eState = DataScanStk::Init;
+				pNextChild->eOpen = OpenType::OPEN_USER;
+				if (true == open_UserScan_SM(pNextChild))
+				{
+					Sched_Yield(); // No scan target.
+				}
+				pCtx->eOpenStep = OpenStk::UserScan;
+			}
+			break;
+		}
+		case OpenStk::UserScan:
+		{
+			if (open_UserScan_SM((DataScanStk*)(pCtx + 1)))
+			{
+				bRet = true;	// all done.
+			}
+		}
 	}
-
-	return FF16 != nMaxBO;
+	return bRet;
 }
 
 void open_PostMtLoad()
@@ -607,7 +853,7 @@ void open_PostMtLoad()
 	}
 	for (uint16 nBN = 0; nBN < NUM_USER_BLK; nBN++)
 	{
-//		ASSERT(gstMeta.astBI[nBN].nVPC == anVPC[nBN]);
+//		assert(gstMeta.astBI[nBN].nVPC == anVPC[nBN]);
 		gstMeta.astBI[nBN].nVPC = anVPC[nBN];
 		gstMeta.astBI[nBN].eState = BlkState::BS_Closed;
 	}
@@ -623,25 +869,90 @@ void open_PostMtLoad()
 
 void meta_Run(void* pParam)
 {
-	if (false == meta_Open_OS())
+	MtStk* pMtStk = (MtStk*)pParam;
+	switch (pMtStk->eStep)
 	{
-		meta_Format();
-	}
-	gbReady = true;
-	OS_SyncEvt(BIT(EVT_OPEN));
-
-	while (true)
-	{
-		if (gbRequest)
+		case MtStk::Mt_Init:
 		{
-			gbRequest = false;
-			meta_Save_OS();
-			META_StartJnl(OPEN_GC, 0);
-			OS_SyncEvt(BIT(EVT_META));
-			continue;
+			OpenStk* pOpenStk = (OpenStk*)(pMtStk + 1);
+			pOpenStk->eOpenStep = OpenStk::Init;
+			meta_Open_SM(pOpenStk);
+			pMtStk->eStep = MtStk::Mt_Open;
+			break;
 		}
 
-		OS_Wait(BIT(EVT_META), LONG_TIME);
+		case MtStk::Mt_Open:
+		{
+			OpenStk* pOpenStk = (OpenStk*)(pMtStk + 1);
+			if (meta_Open_SM(pOpenStk))
+			{
+				if (INV_BN == pOpenStk->nMaxBO)
+				{
+					FmtCtx* pNextCtx = (FmtCtx*)(pMtStk + 1);
+					if (meta_Format(pNextCtx, true))
+					{
+						pMtStk->eStep = MtStk::Mt_Ready;
+						Sched_TrigSyncEvt(BIT(EVT_OPEN));
+						Sched_Yield();
+					}
+					else
+					{
+						pMtStk->eStep = MtStk::Mt_Format;
+					}
+					Sched_Yield();
+				}
+				else
+				{
+					pMtStk->eStep = MtStk::Mt_Ready;
+					Sched_TrigSyncEvt(BIT(EVT_OPEN));
+					Sched_Yield();
+				}
+			}
+			break;
+		}
+		case MtStk::Mt_Format:
+		{
+			FmtCtx* pFmtStk = (FmtCtx*)(pMtStk + 1);
+			if(meta_Format(pFmtStk, false))
+			{
+				pMtStk->eStep = MtStk::Mt_Ready;
+				Sched_TrigSyncEvt(BIT(EVT_OPEN));
+				Sched_Yield();
+			}
+			break;
+		}
+		case MtStk::Mt_Ready:
+		{
+			if (gbRequest)
+			{
+				gbRequest = false;
+				MtSaveStk* pSaveStk = (MtSaveStk*)(pMtStk + 1);
+				pSaveStk->eStep = MtSaveStk::Init;
+				meta_Save_SM(pSaveStk);
+				pMtStk->eStep = MtStk::Mt_Saving;
+			}
+			else
+			{
+				Sched_Wait(BIT(EVT_META), LONG_TIME);
+			}
+			break;
+		}
+		case MtStk::Mt_Saving:
+		{
+			MtSaveStk* pSaveStk = (MtSaveStk*)(pMtStk + 1);
+			if (meta_Save_SM(pSaveStk))
+			{
+				META_StartJnl(OPEN_GC, 0);
+				Sched_TrigSyncEvt(BIT(EVT_META));
+				pMtStk->eStep = MtStk::Mt_Ready;
+				Sched_Yield();
+			}
+			break;
+		}
+		default:
+		{
+			assert(false);
+		}
 	}
 }
 
@@ -650,26 +961,24 @@ uint32 META_GetAge()
 	return gstMetaCtx.nAge;
 }
 
-uint32 META_ReqSave(bool bSync)
+uint32 META_ReqSave()
 {
 	gbRequest = true;
-	OS_SyncEvt(BIT(EVT_META));
-	uint32 nAge = gstMetaCtx.nAge;
-	while (bSync && nAge >= META_GetAge())
-	{
-		OS_Wait(BIT(EVT_META), LONG_TIME);
-	}
+	Sched_TrigSyncEvt(BIT(EVT_META));
 	return gstMetaCtx.nAge;
 }
 
+static uint8 aMtStack[0x40];		///< Stack like meta context.
 void META_Init()
 {
-	gbReady = false;
-	gbRequest = false;
-	MEMSET_PTR(&gstJnlSet, 0);
+	MEMSET_ARRAY(aMtStack, 0xCD);
+	gpMtStk = (MtStk*)aMtStack;
+	gpMtStk->eStep = MtStk::Mt_Init;
+
 	MEMSET_ARRAY(gaOpen, 0xFF);
+
 	MEMSET_ARRAY(gstMeta.astBI, 0);
 	MEMSET_ARRAY(gstMeta.astL2P, 0xFF);
 	MEMSET_OBJ(gstMetaCtx, 0);
-	OS_CreateTask(meta_Run, nullptr, nullptr, "meta");
+	Sched_Register(TID_META, meta_Run, aMtStack, BIT(MODE_NORMAL));
 }

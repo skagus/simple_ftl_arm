@@ -1,7 +1,7 @@
 
 #include "templ.h"
 #include "buf.h"
-#include "os.h"
+#include "scheduler.h"
 #include "io.h"
 #include "page_gc.h"
 #include "page_meta.h"
@@ -30,6 +30,36 @@ void REQ_SetCbf(CbfReq pfCbf)
 	gfCbf = pfCbf;
 }
 
+struct ReqStk
+{
+	enum ReqState
+	{
+		WaitOpen,
+		WaitCmd,
+		Run,
+	};
+	ReqState eState;
+	uint8 nCurSlot;
+};
+
+struct CmdStk
+{
+	enum ReqStep
+	{
+		Init,
+		Run,
+		BlkErsWait,
+		WaitIoDone,		///< wait all IO done.
+		WaitMtSave,
+		Done,
+	};
+	ReqStep eStep;
+	ReqInfo* pReq;	// input.
+	uint32 nWaitAge; ///< Meta save check.
+	uint32 nTag;
+};
+
+
 void req_Done(NCmd eCmd, uint32 nTag)
 {
 	RunInfo* pRun = gaIssued + nTag;
@@ -50,64 +80,96 @@ void req_Done(NCmd eCmd, uint32 nTag)
 	}
 }
 
-void req_Write_OS(ReqInfo* pReq, uint8 nTag)
+bool req_Write_SM(CmdStk* pCtx)
 {
+	if (CmdStk::Init == pCtx->eStep)
+	{
+		pCtx->eStep = CmdStk::Run;
+	}
+	ReqInfo* pReq = pCtx->pReq;
 	uint32 nLPN = pReq->nLPN;
-
 	bool bRet = false;
 	OpenBlk* pDst = META_GetOpen(OPEN_USER);
 	if (nullptr == pDst || pDst->stNextVA.nWL >= NUM_WL)
 	{
-		uint16 nBN = GC_ReqFree_Blocking(OPEN_USER);
-		ASSERT(FF16 != nBN);
-		GC_BlkErase_OS(OPEN_USER, nBN);
-		META_SetOpen(OPEN_USER, nBN);
+		ErbStk* pChild = (ErbStk*)(pCtx + 1);
+		if (CmdStk::Run == pCtx->eStep)
+		{
+			uint16 nBN = GC_ReqFree(OPEN_USER);
+			if (FF16 != nBN)
+			{
+				pChild->nBN = nBN;
+				pChild->eOpen = OPEN_USER;
+				pChild->eStep = ErbStk::Init;
+				GC_BlkErase_SM(pChild);
+				pCtx->eStep = CmdStk::BlkErsWait;
+			}
+			else
+			{
+				Sched_Wait(BIT(EVT_NEW_BLK), LONG_TIME);
+			}
+		}
+		else
+		{
+			assert(CmdStk::BlkErsWait == pCtx->eStep);
+			if (GC_BlkErase_SM((ErbStk*)(pCtx + 1)))
+			{
+				META_SetOpen(OPEN_USER, pChild->nBN);
+				pCtx->eStep = CmdStk::Run;
+				Sched_Yield();
+			}
+		}
 	}
-	*(uint32*)BM_GetSpare(pReq->nBuf) = pReq->nLPN;
-#if (EN_COMPARE == 1)
-	ASSERT(pReq->nLPN == *(uint32*)BM_GetMain(pReq->nBuf));
-#endif
-	JnlRet eJRet;
-	while(true)
+	else
 	{
-		eJRet = META_Update(pReq->nLPN, pDst->stNextVA, OPEN_USER);
+		*(uint32*)BM_GetSpare(pReq->nBuf) = pReq->nLPN;
+#if (EN_COMPARE == 1)
+		ASSERT(pReq->nLPN == *(uint32*)BM_GetMain(pReq->nBuf));
+#endif
+		JnlRet eJRet = META_Update(pReq->nLPN, pDst->stNextVA, OPEN_USER);
 		if (JR_Busy != eJRet)
 		{
-			break;
+			CmdInfo* pCmd = IO_Alloc(IOCB_User);
+			IO_Program(pCmd, pDst->stNextVA.nBN, pDst->stNextVA.nWL, pReq->nBuf, pCtx->nTag);
+
+			pDst->stNextVA.nWL++;
+			bRet = true;
+			if (JR_Filled == eJRet)
+			{
+				META_ReqSave();
+			}
 		}
-		OS_Wait(BIT(EVT_META), LONG_TIME);
+		else
+		{
+			Sched_Wait(BIT(EVT_META), LONG_TIME);
+		}
 	}
-
-	CmdInfo* pCmd = IO_Alloc(IOCB_User);
-	IO_Program(pCmd, pDst->stNextVA.nBN, pDst->stNextVA.nWL, pReq->nBuf, nTag);
-
-	pDst->stNextVA.nWL++;
-	
-	if (JR_Filled == eJRet)
-	{
-		META_ReqSave(false);	// wait till meta save.
-	}
+	return bRet;
 }
 
 /**
 * Unmap read인 경우, sync response, 
 * normal read는 nand IO done에서 async response.
 */
-bool req_Read_OS(ReqInfo* pReq, uint8 nTag)
+bool req_Read_SM(CmdStk* pCtx)
 {
+	ReqInfo* pReq = pCtx->pReq;
 	uint32 nLPN = pReq->nLPN;
 	VAddr stAddr = META_GetMap(nLPN);
-
+	if (CmdStk::Init == pCtx->eStep)
+	{
+		pCtx->eStep = CmdStk::Run;
+	}
 	if (FF32 != stAddr.nDW)
 	{
 		CmdInfo* pCmd = IO_Alloc(IOCB_User);
-		IO_Read(pCmd, stAddr.nBN, stAddr.nWL, pReq->nBuf, nTag);
+		IO_Read(pCmd, stAddr.nBN, stAddr.nWL, pReq->nBuf, pCtx->nTag);
 	}
 	else
 	{
 		uint32* pnVal = (uint32*)BM_GetSpare(pReq->nBuf);
 		*pnVal = nLPN;
-		req_Done(NC_READ, nTag);
+		req_Done(NC_READ, pCtx->nTag);
 	}
 	return true;
 }
@@ -115,65 +177,209 @@ bool req_Read_OS(ReqInfo* pReq, uint8 nTag)
 /**
 * Shutdown command는 항상 sync로 처리한다.
 */
-void req_Shutdown_OS(ReqInfo* pReq, uint8 nTag)
+bool req_Shutdown_SM(CmdStk* pCtx)
 {
-	PRINTF("[SD] %d\n", pReq->eOpt);
-	IO_SetStop(CbKey::IOCB_Mig, true);
-	OS_Idle(OS_MSEC(5));
-
-	if (SD_Safe == pReq->eOpt)
+	ShutdownOpt eOpt = pCtx->pReq->eOpt;
+	bool bRet = false;
+	switch (pCtx->eStep)
 	{
-		META_ReqSave(true);
+		case CmdStk::Init:
+		{
+			CMD_PRINTF("[SD] %d\n", eOpt);
+			GC_Stop();
+			if (IO_CountFree() >= NUM_NAND_CMD)
+			{
+				if (SD_Sudden == eOpt)
+				{
+					gfCbf(pCtx->pReq);
+					gstReqInfoPool.PushTail(pCtx->nTag);
+					bRet = true;
+				}
+				else
+				{
+					pCtx->nWaitAge = META_ReqSave();
+					pCtx->eStep = CmdStk::WaitMtSave;
+					Sched_Wait(BIT(EVT_META), LONG_TIME);
+				}
+			}
+			else
+			{
+				pCtx->eStep = CmdStk::WaitIoDone;
+				Sched_Wait(BIT(EVT_IO_FREE), LONG_TIME);
+			}
+			break;
+		}
+		case CmdStk::WaitIoDone:
+		{
+			if (IO_CountFree() >= NUM_NAND_CMD)
+			{
+				if (SD_Sudden == eOpt)
+				{
+					gfCbf(pCtx->pReq);
+					gstReqInfoPool.PushTail(pCtx->nTag);
+					bRet = true;
+				}
+				else
+				{
+					pCtx->nWaitAge = META_ReqSave();
+					pCtx->eStep = CmdStk::WaitMtSave;
+					Sched_Wait(BIT(EVT_META), LONG_TIME);
+				}
+			}
+			else
+			{
+				Sched_Wait(BIT(EVT_IO_FREE), LONG_TIME);
+			}
+			break;
+		}
+		case CmdStk::WaitMtSave:
+		{
+			assert(eOpt >= SD_Safe);
+			if (META_GetAge() > pCtx->nWaitAge)
+			{
+				gfCbf(pCtx->pReq);
+				gstReqInfoPool.PushTail(pCtx->nTag);
+				CMD_PRINTF("[SD] Done\n");
+				bRet = true;
+			}
+			else
+			{
+				Sched_Wait(BIT(EVT_META), LONG_TIME);
+			}
+			break;
+		}
+		default:
+		{
+			assert(false);
+			break;
+		}
 	}
-
-	gfCbf(pReq);
-	gstReqInfoPool.PushTail(nTag);
-	PRINTF("[SD] Done\n");
+	return bRet;
 }
+
+CmdStk* gpDbgReqCtx;
 
 void req_Run(void* pParam)
 {
-	while (false == META_Ready())
+	ReqStk*  pReqStk = (ReqStk*)pParam;
+RETRY:
+	switch (pReqStk->eState)
 	{
-		OS_Wait(BIT(EVT_OPEN), LONG_TIME);
-	}
-
-	while (true)
-	{
-		if (gstReqQ.Count() <= 0)
+		case ReqStk::WaitOpen:
 		{
-			OS_Wait(BIT(EVT_USER_CMD), LONG_TIME);
-			continue;
+			gpDbgReqCtx = (CmdStk*)(pReqStk + 1);
+
+			if (META_Ready())
+			{
+				pReqStk->eState = ReqStk::WaitCmd;
+				Sched_Yield();
+			}
+			else
+			{
+				Sched_Wait(BIT(EVT_OPEN), LONG_TIME);
+			}
+			break;
 		}
-
-		uint8 nCurSlot = gstReqInfoPool.PopHead();
-		RunInfo* pRun = gaIssued + nCurSlot;
-		ReqInfo* pReq = gstReqQ.PopHead();
-		pRun->pReq = pReq;
-		pRun->nIssued = 0;
-		pRun->nDone = 0;
-		pRun->nTotal = 1;
-		switch (pReq->eCmd)
+		case ReqStk::WaitCmd:
 		{
-			case CMD_READ:
+			if (gstReqQ.Count() <= 0)
 			{
-				req_Read_OS(pReq, nCurSlot);
+				Sched_Wait(BIT(EVT_USER_CMD), LONG_TIME);
 				break;
 			}
-			case CMD_WRITE:
+			pReqStk->nCurSlot = gstReqInfoPool.PopHead();
+			RunInfo* pRun = gaIssued + pReqStk->nCurSlot;
+			pRun->pReq = gstReqQ.PopHead();
+			pRun->nDone = 0;
+			pRun->nIssued = 0;
+			pRun->nTotal = 1; //
+			pReqStk->eState = ReqStk::Run;
+			
+			CmdStk* pCmdStk = (CmdStk*)(pReqStk + 1);
+			pCmdStk->eStep = CmdStk::Init;
+			pCmdStk->nTag = pReqStk->nCurSlot;
+			pCmdStk->pReq = pRun->pReq;
+			switch (pRun->pReq->eCmd)
 			{
-				req_Write_OS(pReq, nCurSlot);
-				break;
+				case CMD_READ:
+				{
+					if (req_Read_SM(pCmdStk))
+					{
+						pReqStk->eState = ReqStk::WaitCmd;
+						goto RETRY;	//Sched_Yield();
+					}
+					break;
+				}
+				case CMD_WRITE:
+				{
+					if (req_Write_SM(pCmdStk))
+					{
+						pReqStk->eState = ReqStk::WaitCmd;
+						goto RETRY;	//Sched_Yield();
+					}
+					break;
+				}
+				case CMD_SHUTDOWN:
+				{
+					if (req_Shutdown_SM(pCmdStk))
+					{
+						pReqStk->eState = ReqStk::WaitCmd;
+						goto RETRY;	//Sched_Yield();
+					}
+					break;
+				}
+				default:
+				{
+					assert(false);
+				}
 			}
-			case CMD_SHUTDOWN:
+			break;
+		}
+		case ReqStk::Run:
+		{
+			RunInfo* pRun = gaIssued + pReqStk->nCurSlot;
+			ReqInfo* pReq = pRun->pReq;
+			CmdStk* pCmdStk = (CmdStk*)(pReqStk + 1);
+			switch (pReq->eCmd)
 			{
-				req_Shutdown_OS(pReq, nCurSlot);
-				break;
+				case CMD_WRITE:
+				{
+					if (req_Write_SM(pCmdStk))
+					{
+						pReqStk->eState = ReqStk::WaitCmd;
+						goto RETRY;	//Sched_Yield();
+					}
+					break;
+				}
+				case CMD_READ:
+				{
+					if (req_Read_SM(pCmdStk))
+					{
+						pReqStk->eState = ReqStk::WaitCmd;
+						goto RETRY;	//Sched_Yield();
+					}
+					break;
+				}
+				case CMD_SHUTDOWN:
+				{
+					if (req_Shutdown_SM(pCmdStk))
+					{
+						pReqStk->eState = ReqStk::WaitCmd;
+						goto RETRY;	//Sched_Yield();
+					}
+					break;
+				}
+				default:
+				{
+					assert(false);
+				}
 			}
-			default:
-			{
-				ASSERT(false);
-			}
+
+			break;
+		}
+		default:
+		{
+			break;
 		}
 	}
 }
@@ -183,41 +389,45 @@ void req_Run(void* pParam)
 */
 void reqResp_Run(void* pParam)
 {
-	while (true)
+RETRY:
+
+	CmdInfo* pCmd = IO_PopDone(IOCB_User);
+	if (nullptr == pCmd)
 	{
-		CmdInfo* pCmd = IO_PopDone(IOCB_User);
-		if (nullptr == pCmd)
+		Sched_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
+	}
+	else
+	{
+		if (NC_READ == pCmd->eCmd)
 		{
-			OS_Wait(BIT(EVT_NAND_CMD), LONG_TIME);
+			req_Done(pCmd->eCmd, pCmd->nTag);
 		}
 		else
 		{
-			if (NC_READ == pCmd->eCmd)
+			if (pCmd->nWL == (NUM_DATA_PAGE - 1))
 			{
-				req_Done(pCmd->eCmd, pCmd->nTag);
+				META_SetBlkState(pCmd->anBBN[0], BS_Closed);
 			}
-			else
-			{
-				if (pCmd->nWL == (NUM_DATA_PAGE - 1))
-				{
-					META_SetBlkState(pCmd->anBBN[0], BS_Closed);
-				}
-				req_Done(pCmd->eCmd, pCmd->nTag);
-			}
-			IO_Free(pCmd);
-			OS_Wait(0, 0);
+			req_Done(pCmd->eCmd, pCmd->nTag);
 		}
+		IO_Free(pCmd);
+		goto RETRY; // Sched_Yield();
 	}
 }
 
+static uint8 aStateCtx[0x60];		///< Stack like meta context.
+ReqStk* gpReqStk;	// for Debug.
+
 void REQ_Init()
 {
+	MEMSET_ARRAY(aStateCtx, 0xCD);
 	gstReqInfoPool.Init();
 	for (uint8 nIdx = 0; nIdx < SIZE_REQ_QUE; nIdx++)
 	{
 		gstReqInfoPool.PushTail(nIdx);
 	}
-
-	OS_CreateTask(req_Run, nullptr, nullptr, "req");
-	OS_CreateTask(reqResp_Run, nullptr, nullptr, "req_resp");
+	gpReqStk = (ReqStk*)aStateCtx;
+	gpReqStk->eState = ReqStk::WaitOpen;
+	Sched_Register(TID_REQ, req_Run, aStateCtx, BIT(MODE_NORMAL));
+	Sched_Register(TID_REQ_RESP, reqResp_Run, nullptr, BIT(MODE_NORMAL));
 }

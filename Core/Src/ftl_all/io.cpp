@@ -3,7 +3,7 @@
 #include "config.h"
 #include "nfc.h"
 #include "buf.h"
-#include "os.h"
+#include "scheduler.h"
 #include "ftl.h"
 #include "io.h"
 
@@ -14,7 +14,6 @@ CbKey gaKeys[NUM_NAND_CMD];
 LinkedQueue<CmdInfo> gNCmdPool;
 IoCbf gaCbf[NUM_IOCB];
 LinkedQueue<CmdInfo> gaDone[NUM_IOCB];
-bool gabStop[NUM_IOCB];
 
 const char* gaIoName[NUM_IOCB] = { "US", "MT", "GC", "UE" };	// to print.
 
@@ -64,19 +63,48 @@ void io_Print(CmdInfo* pCmd)
 			assert(false);
 		}
 	}
+
 }
 
 #if (EN_DUMMY_NFC == 1)
+
+uint32 gaSpare[PBLK_PER_DIE][NUM_WL][BYTE_PER_SPARE / 4];
+uint32 anAcc[3];
+
 void NFC_MyIssue(CmdInfo* pCmd)
 {
 	io_Print(pCmd);
 
+	switch (pCmd->eCmd)
+	{
+		case NC_READ:
+		{
+			anAcc[0]++;
+			uint8* pSpare = BM_GetSpare(pCmd->stPgm.anBufId[0]);
+			memcpy(pSpare, gaSpare[pCmd->anBBN[0]][pCmd->nWL], BYTE_PER_SPARE);
+			break;
+		}
+		case NC_PGM:
+		{
+			anAcc[1]++;
+			uint8* pSpare = BM_GetSpare(pCmd->stPgm.anBufId[0]);
+			memcpy(gaSpare[pCmd->anBBN[0]][pCmd->nWL], pSpare, BYTE_PER_SPARE);
+			break;
+		}
+		case NC_ERB:
+		{
+			anAcc[2]++;
+			memset(gaSpare[pCmd->anBBN[0]], 0x0, sizeof(NUM_WL * BYTE_PER_SPARE));
+			break;
+		}
+	}
 	uint8 nId = pCmd - gaCmds;
 	uint8 nTag = gaKeys[nId];
 	gaDone[nTag].PushTail(pCmd);
-	OS_AsyncEvt(BIT(EVT_NAND_CMD));
+	Sched_TrigAsyncEvt(BIT(EVT_NAND_CMD));
 }
 #else
+
 void io_CbDone(uint32 nDie, uint32 nTag)
 {
 	CmdInfo* pRet = NFC_GetDone();
@@ -87,7 +115,7 @@ void io_CbDone(uint32 nDie, uint32 nTag)
 		uint8 nId = pRet - gaCmds;
 		uint8 nTag = gaKeys[nId];
 		gaDone[nTag].PushTail(pRet);
-		OS_AsyncEvt(BIT(EVT_NAND_CMD));
+		Sched_TrigAsyncEvt(BIT(EVT_NAND_CMD));
 	}
 }
 
@@ -98,15 +126,11 @@ void IO_Free(CmdInfo* pCmd)
 {
 	gaKeys[pCmd - gaCmds] = NUM_IOCB;
 	gNCmdPool.PushTail(pCmd);
-	OS_SyncEvt(BIT(EVT_IO_FREE));
+	Sched_TrigSyncEvt(BIT(EVT_IO_FREE));
 }
 
 CmdInfo* IO_Alloc(CbKey eKey)
 {
-	while (true == gabStop[eKey])
-	{
-		OS_Wait(BIT(EVT_IO_FREE), LONG_TIME);
-	}
 	if (gNCmdPool.Count() > 0)
 	{
 		CmdInfo* pRet = gNCmdPool.PopHead();
@@ -161,16 +185,6 @@ void IO_Erase(CmdInfo* pstCmd, uint16 nPBN, uint32 nTag)
 	NFC_MyIssue(pstCmd);
 }
 
-void IO_SetStop(CbKey eKey, bool bStop)
-{
-	gabStop[eKey] = bStop;
-	if (NOT(bStop))
-	{
-		OS_SyncEvt(BIT(EVT_IO_FREE));
-	}
-}
-
-
 void IO_RegCbf(CbKey eId, IoCbf pfCb)
 {
 	gaCbf[eId] = pfCb;
@@ -183,7 +197,6 @@ void IO_Init()
 	NFC_Init(io_CbDone);
 #endif
 	gNCmdPool.Init();
-	MEMSET_ARRAY(gabStop, 0x0);
 	MEMSET_ARRAY(gaDone, 0x0);
 	for (uint16 nIdx = 0; nIdx < NUM_NAND_CMD; nIdx++)
 	{

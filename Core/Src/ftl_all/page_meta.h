@@ -121,11 +121,9 @@ struct MetaCtx
 #define SIZE_MAP_PER_SAVE		(BYTE_PER_PPG - sizeof(JnlSet))
 #define NUM_MAP_SLICE			DIV_CEIL(sizeof(Meta), SIZE_MAP_PER_SAVE)
 
-static_assert(sizeof(JnlSet) <= BYTE_PER_PPG);
-static_assert(SIZE_MAP_PER_SAVE > 0);
 
 void META_Init();
-uint32 META_ReqSave(bool bSync);	// Age return.
+uint32 META_ReqSave();	// Age return.
 uint32 META_GetAge();
 
 void META_SetOpen(OpenType eType, uint16 nBN, uint16 nWL = 0);

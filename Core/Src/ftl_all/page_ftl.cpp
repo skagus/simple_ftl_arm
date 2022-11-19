@@ -1,8 +1,7 @@
 #include "templ.h"
 #include "cpu.h"
 #include "buf.h"
-
-#include "os.h"
+#include "scheduler.h"
 #include "io.h"
 #include "page_gc.h"
 #include "page_req.h"
@@ -19,12 +18,12 @@ void FTL_Request(ReqInfo* pReq)
 {
 	pReq->nSeqNo = SIM_GetSeqNo();
 	gstReqQ.PushTail(pReq);
-
+	
 #if (EN_WORK_GEN == 1)
-	OS_SyncEvt(BIT(EVT_USER_CMD));
+	Sched_TrigAsyncEvt(BIT(EVT_USER_CMD));
 	CPU_TimePass(SIM_USEC(5));
 #else
-	OS_AsyncEvt(BIT(EVT_USER_CMD));
+	Sched_TrigAsyncEvt(BIT(EVT_USER_CMD)); 
 	CPU_TimePass(SIM_USEC(5));
 	CPU_Wakeup(CPU_FTL, SIM_USEC(1));
 #endif
@@ -43,18 +42,18 @@ void FTL_Main(void* pParam)
 {
 	BM_Init();
 
-	OS_Init();
+	Sched_Init();
 
 	gstReqQ.Init();
-	IO_Init();
-	REQ_Init();
-	META_Init();
-	GC_Init();
 #if (EN_WORK_GEN == 1)
 #include "test.h"
 	TEST_Init();
 #endif
+	IO_Init();
+	REQ_Init();
+	META_Init();
+	GC_Init();
 	PRINTF("[FTL] Init done\n");
-	OS_Start();
+	Sched_Run();
 }
 

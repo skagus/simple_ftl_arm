@@ -1,4 +1,5 @@
 #pragma once
+
 #if defined(EN_SIM)
 #include <Windows.h>
 #include <intrin.h>
