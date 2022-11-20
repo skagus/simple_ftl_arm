@@ -15,9 +15,9 @@ extern Queue<ReqInfo*, SIZE_REQ_QUE> gstReqQ;
 struct RunInfo
 {
 	ReqInfo* pReq;
-	uint16 nIssued;	///< Issued count.
-	uint16 nDone; ///< Done count.
-	uint16 nTotal;
+	uint32 nIssued;	///< Issued count.
+	uint32 nDone; ///< Done count.
+	uint32 nTotal;
 };
 Queue<uint8, SIZE_REQ_QUE> gstReqInfoPool;
 RunInfo gaIssued[SIZE_REQ_QUE];
@@ -60,7 +60,7 @@ struct CmdStk
 };
 
 
-void req_Done(NCmd eCmd, uint32 nTag)
+static void req_Done(NCmd eCmd, uint32 nTag)
 {
 	RunInfo* pRun = gaIssued + nTag;
 	ReqInfo* pReq = pRun->pReq;
@@ -80,7 +80,7 @@ void req_Done(NCmd eCmd, uint32 nTag)
 	}
 }
 
-bool req_Write_SM(CmdStk* pCtx)
+static bool req_Write_SM(CmdStk* pCtx)
 {
 	if (CmdStk::Init == pCtx->eStep)
 	{
@@ -151,7 +151,7 @@ bool req_Write_SM(CmdStk* pCtx)
 * Unmap read인 경우, sync response, 
 * normal read는 nand IO done에서 async response.
 */
-bool req_Read_SM(CmdStk* pCtx)
+static bool req_Read_SM(CmdStk* pCtx)
 {
 	ReqInfo* pReq = pCtx->pReq;
 	uint32 nLPN = pReq->nLPN;
@@ -177,7 +177,7 @@ bool req_Read_SM(CmdStk* pCtx)
 /**
 * Shutdown command는 항상 sync로 처리한다.
 */
-bool req_Shutdown_SM(CmdStk* pCtx)
+static bool req_Shutdown_SM(CmdStk* pCtx)
 {
 	ShutdownOpt eOpt = pCtx->pReq->eOpt;
 	bool bRet = false;
@@ -257,7 +257,7 @@ bool req_Shutdown_SM(CmdStk* pCtx)
 	return bRet;
 }
 
-CmdStk* gpDbgReqCtx;
+static CmdStk* gpDbgReqCtx;
 
 void req_Run(void* pParam)
 {
@@ -390,7 +390,6 @@ RETRY:
 void reqResp_Run(void* pParam)
 {
 RETRY:
-
 	CmdInfo* pCmd = IO_PopDone(IOCB_User);
 	if (nullptr == pCmd)
 	{
@@ -416,7 +415,7 @@ RETRY:
 }
 
 static uint8 aStateCtx[0x60];		///< Stack like meta context.
-ReqStk* gpReqStk;	// for Debug.
+static ReqStk* gpReqStk;	// for Debug.
 
 void REQ_Init()
 {

@@ -48,9 +48,9 @@ struct ErbInfo
 struct CmdInfo
 {
 	NCmd eCmd;
-	uint8 nDie;
-	uint16 anBBN[NUM_PLN];
+	uint16 nDie;
 	uint16 nWL;
+	uint16 anBBN[NUM_PLN];
 	uint32 bmPln;	// Address Info.
 	union
 	{

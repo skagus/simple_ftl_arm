@@ -9,8 +9,48 @@
 
 #define PRINTF			SIM_Print
 
+/*
+ * Performance evaluation.
+ * 1: Individual Structure
+ * 2: Structure of Array
+ * 3: Array of structure
+ */
+#define SEL	(2)
+
+#if (SEL == 1)
 CmdInfo gaCmds[NUM_NAND_CMD];
 CbKey gaKeys[NUM_NAND_CMD];
+#define CMD(x)		(gaCmds[(x)])
+#define KEY(x)		(gaKeys[(x)])
+#define CMD_IDX(x)	((x) - gaCmds)
+
+#elif (SEL == 2)	//
+struct CmdSet
+{
+	CmdInfo aCmds[NUM_NAND_CMD];
+	CbKey aKeys[NUM_NAND_CMD];
+} gCmdSet;
+#define CMD(x)		(gCmdSet.aCmds[(x)])
+#define KEY(x)		(gCmdSet.aKeys[(x)])
+#define CMD_IDX(x)	((x) - gCmdSet.aCmds)
+
+#elif (SEL == 3)
+struct CmdSet
+{
+	CmdInfo stCmd;
+	CbKey eKey;
+};
+CmdSet gaCmdSet[NUM_NAND_CMD];
+#define CMD_IDX(x)	((CmdSet*)(x) - gaCmdSet)
+#define CMD(x)		(gaCmdSet[(x)].stCmd)
+#define KEY(x)		(gaCmdSet[(x)].eKey)
+#endif
+
+
+//CmdInfo gaCmds[NUM_NAND_CMD];
+//CbKey gaKeys[NUM_NAND_CMD];
+
+
 LinkedQueue<CmdInfo> gNCmdPool;
 IoCbf gaCbf[NUM_IOCB];
 LinkedQueue<CmdInfo> gaDone[NUM_IOCB];
@@ -32,7 +72,7 @@ CmdInfo* IO_GetDone(CbKey eCbId)
 
 void io_Print(CmdInfo* pCmd)
 {
-	uint8 nId = pCmd - gaCmds;
+	uint8 nId = CMD_IDX(pCmd);
 	switch (pCmd->eCmd)
 	{
 		case NCmd::NC_ERB:
@@ -79,27 +119,28 @@ void NFC_MyIssue(CmdInfo* pCmd)
 	{
 		case NC_READ:
 		{
-			anAcc[0]++;
 			uint8* pSpare = BM_GetSpare(pCmd->stPgm.anBufId[0]);
 			memcpy(pSpare, gaSpare[pCmd->anBBN[0]][pCmd->nWL], BYTE_PER_SPARE);
+			anAcc[0]++;
 			break;
 		}
 		case NC_PGM:
 		{
-			anAcc[1]++;
 			uint8* pSpare = BM_GetSpare(pCmd->stPgm.anBufId[0]);
 			memcpy(gaSpare[pCmd->anBBN[0]][pCmd->nWL], pSpare, BYTE_PER_SPARE);
+			anAcc[1]++;
 			break;
 		}
 		case NC_ERB:
 		{
-			anAcc[2]++;
 			memset(gaSpare[pCmd->anBBN[0]], 0x0, sizeof(NUM_WL * BYTE_PER_SPARE));
+			anAcc[2]++;
 			break;
 		}
 	}
-	uint8 nId = pCmd - gaCmds;
-	uint8 nTag = gaKeys[nId];
+
+	uint32 nId = CMD_IDX(pCmd);
+	uint32 nTag = KEY(nId);
 	gaDone[nTag].PushTail(pCmd);
 	Sched_TrigAsyncEvt(BIT(EVT_NAND_CMD));
 }
@@ -124,18 +165,18 @@ void io_CbDone(uint32 nDie, uint32 nTag)
 
 void IO_Free(CmdInfo* pCmd)
 {
-	gaKeys[pCmd - gaCmds] = NUM_IOCB;
+	KEY(CMD_IDX(pCmd)) = NUM_IOCB;
 	gNCmdPool.PushTail(pCmd);
 	Sched_TrigSyncEvt(BIT(EVT_IO_FREE));
 }
 
 CmdInfo* IO_Alloc(CbKey eKey)
 {
-	if (gNCmdPool.Count() > 0)
+	if (likely(gNCmdPool.Count() > 0))
 	{
 		CmdInfo* pRet = gNCmdPool.PopHead();
 		pRet->nDbgSN = SIM_GetSeqNo();
-		gaKeys[pRet - gaCmds] = eKey;
+		KEY(CMD_IDX(pRet)) = eKey;
 		return pRet;
 	}
 	return nullptr;
@@ -198,8 +239,8 @@ void IO_Init()
 #endif
 	gNCmdPool.Init();
 	MEMSET_ARRAY(gaDone, 0x0);
-	for (uint16 nIdx = 0; nIdx < NUM_NAND_CMD; nIdx++)
+	for (uint32 nIdx = 0; nIdx < NUM_NAND_CMD; nIdx++)
 	{
-		IO_Free(gaCmds + nIdx);
+		IO_Free(&CMD(nIdx));
 	}
 }

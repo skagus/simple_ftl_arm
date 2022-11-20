@@ -17,8 +17,11 @@
   */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
-#include "main.h"
+#include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
+#include "main.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -56,12 +59,18 @@ static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN 0 */
 void FTL_Main(void* pParam);
 
-void myputs(char* szLine)
+#define MAX_BUF_SIZE		(64)
+static char gaBuf[MAX_BUF_SIZE];
+void myPrintf(const char* format, ...)
 {
-	int nLen = strlen(szLine);
-	HAL_UART_Transmit(&huart1, (uint8_t*)szLine, nLen, 100);
-}
+    va_list ap;
+    va_start(ap, format);
+    vsprintf(gaBuf, format, ap);
+    va_end(ap);
 
+	int nLen = strlen(gaBuf);
+	HAL_UART_Transmit(&huart1, (uint8_t*)gaBuf, nLen, 100);
+}
 /* USER CODE END 0 */
 
 /**
@@ -93,13 +102,14 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
-  myputs("Start\n");
   /* USER CODE BEGIN 2 */
-  FTL_Main(0);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  myPrintf("\n\nStart: %s %s\n", __DATE__, __TIME__);
+  FTL_Main(NULL);
+
   while (1)
   {
     /* USER CODE END WHILE */

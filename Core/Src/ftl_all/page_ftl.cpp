@@ -53,6 +53,7 @@ void FTL_Main(void* pParam)
 	REQ_Init();
 	META_Init();
 	GC_Init();
+
 	PRINTF("[FTL] Init done\n");
 	Sched_Run();
 }

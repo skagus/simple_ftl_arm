@@ -465,13 +465,12 @@ inline uint32_t GetTick(bool bReset)
 
 const TestDef gaShortSet[] =
 {
+	{tc_SeqRead, 0, FF32, 1},	///< for Wait open.
 	{tc_SeqWrite, 0, FF32, FF32},
 	{tc_SeqRead, 0, FF32, FF32},
 	{tc_RandRead, 0, FF32, FF32},
 //	{tc_RandWrite, 0, FF32, FF32},
 };
-
-extern void myputs(char* szLine);
 
 void sc_DefRunner(void* pParam)
 {
@@ -500,7 +499,6 @@ void sc_DefRunner(void* pParam)
 				? gnCntLBA : gaShortSet[pStk->nTestIdx].nTotal;
 			pTStk->bInit = false;
 			Sched_Yield();
-			myputs("TC start\n");
 			GetTick(true);		// Tick...
 			break;
 		}
@@ -511,8 +509,7 @@ void sc_DefRunner(void* pParam)
 			{
 				char aBuf[32];
 				nTick = GetTick(false);
-				sprintf(aBuf, "TC: %d, %d\n", pStk->nTestIdx, nTick);
-				myputs(aBuf);
+				myPrintf("TC: %d, %d\n", pStk->nTestIdx, nTick);
 
 				pStk->nTestIdx++;
 				if (pStk->nTestIdx < sizeof(gaShortSet) / sizeof(gaShortSet[0]))
@@ -522,7 +519,7 @@ void sc_DefRunner(void* pParam)
 				}
 				else
 				{
-					myputs("End Of TC\n");
+					myPrintf("End Of TC\n");
 				}
 			}
 		}

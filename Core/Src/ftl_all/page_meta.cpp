@@ -51,10 +51,8 @@ struct MtStk
 };
 MtStk* gpMtStk;
 
-void open_PostMtLoad();
 
-
-uint16 meta_MtBlk2PBN(uint16 nMetaBN)
+static uint16 meta_MtBlk2PBN(uint16 nMetaBN)
 {
 	return nMetaBN + BASE_META_BLK;
 }
@@ -69,7 +67,7 @@ struct FmtCtx
 	};
 	Step eStep;
 };
-bool meta_Format(FmtCtx* pFmtCtx, bool b1st)
+static bool meta_Format(FmtCtx* pFmtCtx, bool b1st)
 {
 	bool bRet = false;
 
@@ -108,7 +106,7 @@ bool meta_Format(FmtCtx* pFmtCtx, bool b1st)
 	return bRet;
 }
 
-void dbg_MapIntegrity()
+static void dbg_MapIntegrity()
 {
 	uint16 anVPC[NUM_USER_BLK];
 	MEMSET_ARRAY(anVPC, 0x0);
@@ -119,7 +117,7 @@ void dbg_MapIntegrity()
 			anVPC[gstMeta.astL2P[nLPN].nBN]++;
 		}
 	}
-	for (uint16 nBN = 0; nBN < NUM_USER_BLK; nBN++)
+	for (uint32 nBN = 0; nBN < NUM_USER_BLK; nBN++)
 	{
 		ASSERT(gstMeta.astBI[nBN].nVPC == anVPC[nBN]);
 	}
@@ -146,7 +144,7 @@ VAddr META_GetMap(uint32 nLPN)
 
 BlkInfo* META_GetFree(uint16* pnBN, bool bFirst)
 {
-	for (uint16 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
+	for (uint32 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
 	{
 		BlkInfo* pBI = gstMeta.astBI + nIdx;
 		if ((BS_Closed == pBI->eState)
@@ -260,7 +258,7 @@ OpenBlk* META_GetOpen(OpenType eOpen)
 
 
 
-bool meta_Save_SM(MtSaveStk* pCtx)
+static bool meta_Save_SM(MtSaveStk* pCtx)
 {
 	if (MtSaveStk::Init == pCtx->eStep)
 	{
@@ -380,7 +378,7 @@ struct DataScanStk
 	uint16 nRun;		///< Count of running nand command.
 };
 
-bool open_UserScan_SM(DataScanStk* pCtx)
+static bool open_UserScan_SM(DataScanStk* pCtx)
 {
 	bool bRet = false;
 	if (DataScanStk::Init == pCtx->eState)
@@ -464,7 +462,7 @@ struct MtPgStk
 	uint16 nDone;	// Internal.
 };
 
-bool open_PageScan_SM(MtPgStk* pCtx)
+static bool open_PageScan_SM(MtPgStk* pCtx)
 {
 	bool bRet = false;
 	if (MtPgStk::Init == pCtx->eState)
@@ -522,7 +520,7 @@ bool open_PageScan_SM(MtPgStk* pCtx)
 	return bRet;
 }
 
-void open_ReplayJnl(JnlSet* pJnlSet, uint32 nAge)
+static void open_ReplayJnl(JnlSet* pJnlSet, uint32 nAge)
 {
 	PRINTF("[OPEN] Replay Jnl Age:%d, Cnt: %d, start with %X\n", nAge, pJnlSet->nCnt, pJnlSet->aJnl[0].Com.nValue);
 	for (uint16 nIdx = 0; nIdx < pJnlSet->nCnt; nIdx++)
@@ -569,7 +567,7 @@ void open_ReplayJnl(JnlSet* pJnlSet, uint32 nAge)
 	}
 }
 
-bool open_MtLoad_SM(MtPgStk* pCtx)
+static bool open_MtLoad_SM(MtPgStk* pCtx)
 {
 	bool bRet = false;
 	if (MtPgStk::Init == pCtx->eState)
@@ -657,7 +655,7 @@ struct MtBlkScanStk
 	uint32 nMaxAge;
 };
 
-bool open_BlkScan_SM(MtBlkScanStk* pCtx)
+static bool open_BlkScan_SM(MtBlkScanStk* pCtx)
 {
 	bool bRet = false;
 	if (MtBlkScanStk::Init == pCtx->eState)
@@ -719,6 +717,32 @@ bool open_BlkScan_SM(MtBlkScanStk* pCtx)
 // =====================================================
 
 
+static void open_PostMtLoad()
+{
+	uint16 anVPC[NUM_USER_BLK];
+	MEMSET_ARRAY(anVPC, 0x0);
+	for (uint32 nLPN = 0; nLPN < NUM_LPN; nLPN++)
+	{
+		if (gstMeta.astL2P[nLPN].nBN < NUM_USER_BLK)
+		{
+			anVPC[gstMeta.astL2P[nLPN].nBN]++;
+		}
+	}
+	for (uint16 nBN = 0; nBN < NUM_USER_BLK; nBN++)
+	{
+//		assert(gstMeta.astBI[nBN].nVPC == anVPC[nBN]);
+		gstMeta.astBI[nBN].nVPC = anVPC[nBN];
+		gstMeta.astBI[nBN].eState = BlkState::BS_Closed;
+	}
+	for (uint32 nOpen = 0; nOpen < NUM_OPEN; nOpen++)
+	{
+		if (gaOpen[nOpen].stNextVA.nWL < NUM_WL)
+		{
+			META_SetOpen((OpenType)nOpen, gaOpen[nOpen].stNextVA.nBN, gaOpen[nOpen].stNextVA.nWL);
+		}
+	}
+}
+
 struct OpenStk
 {
 	enum MetaStep
@@ -734,7 +758,7 @@ struct OpenStk
 	uint16 nMaxBO;	// for return.
 };
 
-bool meta_Open_SM(OpenStk* pCtx)
+static bool meta_Open_SM(OpenStk* pCtx)
 {
 	bool bRet = false;
 
@@ -838,32 +862,6 @@ bool meta_Open_SM(OpenStk* pCtx)
 		}
 	}
 	return bRet;
-}
-
-void open_PostMtLoad()
-{
-	uint16 anVPC[NUM_USER_BLK];
-	MEMSET_ARRAY(anVPC, 0x0);
-	for (uint32 nLPN = 0; nLPN < NUM_LPN; nLPN++)
-	{
-		if (gstMeta.astL2P[nLPN].nBN < NUM_USER_BLK)
-		{
-			anVPC[gstMeta.astL2P[nLPN].nBN]++;
-		}
-	}
-	for (uint16 nBN = 0; nBN < NUM_USER_BLK; nBN++)
-	{
-//		assert(gstMeta.astBI[nBN].nVPC == anVPC[nBN]);
-		gstMeta.astBI[nBN].nVPC = anVPC[nBN];
-		gstMeta.astBI[nBN].eState = BlkState::BS_Closed;
-	}
-	for (uint32 nOpen = 0; nOpen < NUM_OPEN; nOpen++)
-	{
-		if (gaOpen[nOpen].stNextVA.nWL < NUM_WL)
-		{
-			META_SetOpen((OpenType)nOpen, gaOpen[nOpen].stNextVA.nBN, gaOpen[nOpen].stNextVA.nWL);
-		}
-	}
 }
 
 

@@ -11,7 +11,7 @@
 typedef struct
 {
 	Entry	pfTask;
-	uint16  nTimeOut;
+	uint32  nTimeOut;
 	Evts    bmWaitEvt;         // Events to wait...
 	void*	pParam;
 #if (DBG_SCHEDULER)
@@ -19,24 +19,27 @@ typedef struct
 #endif
 } TaskInfo;
 
-TaskInfo astTask[NUM_TASK];
+struct Sched
+{
+	TaskInfo astTask[NUM_TASK];
 
-uint8 nCurTask;		///< Current running task.
-TaskBtm bmRdyTask;	///< Ready to run.
+	TaskBtm bmRdyTask;	///< Ready to run.
+	Evts bmSyncEvt;	///< Sync envent that isn't handled.
+	uint32 nCurTick;
+	uint32 nCurTask;		///< Current running task.
+	TaskBtm gabmModeRun[NUM_MODE];
+	RunMode geRunMode;
+} gSched;
 
-TaskBtm gabmModeRun[NUM_MODE];
-RunMode geRunMode;
-std::atomic_flag gnIntEnable = ATOMIC_FLAG_INIT;
+//std::atomic_flag gnIntEnable = ATOMIC_FLAG_INIT;
 
-Evts bmSyncEvt;	///< Sync envent that isn't handled.
 volatile Evts bmAsyncEvt;	///< ISR에서 등록된 event bitmap.
-volatile uint16 nAsyncTick;	///< Running중 호출된 Tick ISR의 횟수.
-volatile uint32 nCurTick;
+volatile uint32 nAsyncTick;	///< Running중 호출된 Tick ISR의 횟수.
 
 void sched_TickISR(uint32 tag, uint32 result)
 {
 	nAsyncTick++;
-	nCurTick++;
+	gSched.nCurTick++;
 }
 
 /**
@@ -44,12 +47,12 @@ Get async event into scheduler.
 This function called under interrupt disabled.
 @return need to run.
 */
-TaskBtm sched_HandleEvt(Evts bmEvt, uint16 nTick)
+static TaskBtm sched_HandleEvt(Evts bmEvt, uint32 nTick)
 {
 	TaskBtm bmNewRdy = 0;
-	for (uint8 nTaskId = 0; nTaskId < NUM_TASK; nTaskId++)
+	for (uint32 nTaskId = 0; nTaskId < NUM_TASK; nTaskId++)
 	{
-		TaskInfo* pTask = astTask + nTaskId;
+		TaskInfo* pTask = gSched.astTask + nTaskId;
 		if (pTask->bmWaitEvt & bmEvt)
 		{
 			bmNewRdy |= BIT(nTaskId);
@@ -80,9 +83,9 @@ TaskBtm sched_HandleEvt(Evts bmEvt, uint16 nTick)
 */
 void Sched_TrigAsyncEvt(Evts bmEvt)
 {
-	while (gnIntEnable.test_and_set());
+//	while (gnIntEnable.test_and_set());
 	bmAsyncEvt |= bmEvt;
-	gnIntEnable.clear();
+//	gnIntEnable.clear();
 }
 
 /**
@@ -91,64 +94,64 @@ void Sched_TrigAsyncEvt(Evts bmEvt)
 */
 void Sched_TrigSyncEvt(Evts bmEvt)
 {
-	bmSyncEvt |= bmEvt;
+	gSched.bmSyncEvt |= bmEvt;
 }
 
 /**
 * Wait events till nTime.
 */
-void Sched_Wait(Evts bmEvt, uint16 nTime)
+void Sched_Wait(Evts bmEvt, uint32 nTime)
 {
 	if (0 == bmEvt && 0 == nTime)
 	{
-		bmRdyTask |= BIT(nCurTask);
+		gSched.bmRdyTask |= BIT(gSched.nCurTask);
 	}
-	astTask[nCurTask].bmWaitEvt = bmEvt;
-	astTask[nCurTask].nTimeOut = nTime;
+	gSched.astTask[gSched.nCurTask].bmWaitEvt = bmEvt;
+	gSched.astTask[gSched.nCurTask].nTimeOut = nTime;
 }
 
 /*
 * Register Task.
 * Task ID is pre-defined.
 */
-void Sched_Register(uint8 nTaskID, Entry task, void* pParam, uint8 bmRunMode) ///< Register tasks.
+void Sched_Register(uint32 nTaskID, Entry task, void* pParam, uint32 bmRunMode) ///< Register tasks.
 {
-	TaskInfo* pTI = astTask + nTaskID;
+	TaskInfo* pTI = gSched.astTask + nTaskID;
 	pTI->pfTask = task;
 	pTI->pParam = pParam;
-	bmRdyTask |= BIT(nTaskID);
+	gSched.bmRdyTask |= BIT(nTaskID);
 
 	for (uint8 eMode = 0; eMode < NUM_MODE; eMode++)
 	{
 		if (bmRunMode & BIT(eMode))
 		{
-			gabmModeRun[eMode] |= BIT(nTaskID);
+			gSched.gabmModeRun[eMode] |= BIT(nTaskID);
 		}
 	}
 }
 
 void Sched_SetMode(RunMode eMode)
 {
-	geRunMode = eMode;
+	gSched.geRunMode = eMode;
 }
 
 RunMode Sched_GetMode()
 {
-	return geRunMode;
+	return gSched.geRunMode;
 }
 
 
 void Sched_Init()
 {
-	nCurTask = 0;
-	geRunMode = RunMode::MODE_NORMAL;
-	gnIntEnable.clear();
+	gSched.nCurTask = 0;
+	gSched.geRunMode = RunMode::MODE_NORMAL;
+//	gnIntEnable.clear();
 
-	bmSyncEvt = 0;
+	gSched.bmSyncEvt = 0;
 	bmAsyncEvt = 0;
 	nAsyncTick = 0;
-	nCurTick = 0;
-	bmRdyTask = 0;
+	gSched.nCurTick = 0;
+	gSched.bmRdyTask = 0;
 
 //	TMR_Init();
 //	TMR_Add(0, SIM_MSEC(MS_PER_TICK), sched_TickISR, true);
@@ -162,38 +165,38 @@ void Sched_Run()
 	while (true)
 	{
 		// disable interrupt.
-		while (gnIntEnable.test_and_set());
+//		while (gnIntEnable.test_and_set());
 		Evts bmEvt = bmAsyncEvt;
 		bmAsyncEvt = 0;
-		gnIntEnable.clear();
-		uint16 nTick = nAsyncTick;
+//		gnIntEnable.clear();
+		uint32 nTick = nAsyncTick;
 		nAsyncTick = 0;
 		// enable interrupt.
-		bmEvt |= bmSyncEvt;
-		bmSyncEvt = 0;
-		TaskBtm bmRdy = bmRdyTask | sched_HandleEvt(bmEvt, nTick);
-		bmRdyTask = 0;
+		bmEvt |= gSched.bmSyncEvt;
+		gSched.bmSyncEvt = 0;
+		TaskBtm bmRdy = gSched.bmRdyTask | sched_HandleEvt(bmEvt, nTick);
+		gSched.bmRdyTask = 0;
 		if (bmRdy != 0)
 		{
-			while (bmRdy & gabmModeRun[geRunMode])
+			while (bmRdy & gSched.gabmModeRun[gSched.geRunMode])
 			{
-				if (BIT(nCurTask) & bmRdy & gabmModeRun[geRunMode])
+				if (BIT(gSched.nCurTask) & bmRdy & gSched.gabmModeRun[gSched.geRunMode])
 				{
-					TaskInfo* pTask = astTask + nCurTask;
-					Evts bmEvt = pTask->bmWaitEvt;
+					TaskInfo* pTask = gSched.astTask + gSched.nCurTask;
 					pTask->bmWaitEvt = 0;
 					pTask->pfTask(pTask->pParam);	// paramter is triggered event.
 					CPU_TimePass(SIM_USEC(50));
 #if DBG_SCHEDULER
+					Evts bmEvt = pTask->bmWaitEvt;
 					pTask->nCntRun++;
-					ASSERT(pTask->bmWaitEvt || pTask->nTimeOut || (bmRdyTask & BIT(nCurTask)));
+					ASSERT(pTask->bmWaitEvt || pTask->nTimeOut || (gSched.bmRdyTask & BIT(gSched.nCurTask)));
 #endif
-					bmRdy &= ~BIT(nCurTask);
+					bmRdy &= ~BIT(gSched.nCurTask);
 				}
-				nCurTask = (nCurTask + 1) % NUM_TASK;
+				gSched.nCurTask = (gSched.nCurTask + 1) % NUM_TASK;
 			}
 			// Mode에 따라 실행되지 않은 task는 이후에 mode가 복귀했을 때 실행할 것.
-			bmRdyTask |= bmRdy;
+			gSched.bmRdyTask |= bmRdy;
 		}
 		else
 		{

@@ -19,6 +19,7 @@ uint32 SIM_GetSeqNo();
 void SIM_Init(uint32 nSeed, uint32 nBrkNo = 0);
 void SIM_Run();	// infinite running.
 #else
+void myPrintf(const char* format, ...);
 #define SIM_PowerDown(...)
 #define SIM_GetTick(...)			(0)
 #define SIM_GetCycle(...)			(0)
