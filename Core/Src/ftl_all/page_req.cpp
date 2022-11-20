@@ -15,11 +15,11 @@ extern Queue<ReqInfo*, SIZE_REQ_QUE> gstReqQ;
 struct RunInfo
 {
 	ReqInfo* pReq;
-	uint16 nIssued;	///< Issued count.
-	uint16 nDone; ///< Done count.
-	uint16 nTotal;
+	uint32 nIssued;	///< Issued count.
+	uint32 nDone; ///< Done count.
+	uint32 nTotal;
 };
-Queue<uint8, SIZE_REQ_QUE> gstReqInfoPool;
+Queue<uint32, SIZE_REQ_QUE> gstReqInfoPool;
 RunInfo gaIssued[SIZE_REQ_QUE];
 
 
@@ -30,14 +30,14 @@ void REQ_SetCbf(CbfReq pfCbf)
 	gfCbf = pfCbf;
 }
 
-void req_Done(NCmd eCmd, uint32 nTag)
+static void req_Done(NCmd eCmd, uint32 nTag)
 {
 	RunInfo* pRun = gaIssued + nTag;
 	ReqInfo* pReq = pRun->pReq;
 	uint32* pnVal = (uint32*)BM_GetSpare(pReq->nBuf);
 	pRun->nDone++;
 
-	if (MARK_ERS != *pnVal)
+	if (likely(MARK_ERS != *pnVal))
 	{
 		ASSERT(pReq->nLPN == *pnVal);
 	}
@@ -50,13 +50,13 @@ void req_Done(NCmd eCmd, uint32 nTag)
 	}
 }
 
-void req_Write_OS(ReqInfo* pReq, uint8 nTag)
+static void req_Write_OS(ReqInfo* pReq, uint8 nTag)
 {
 	uint32 nLPN = pReq->nLPN;
 
 	bool bRet = false;
 	OpenBlk* pDst = META_GetOpen(OPEN_USER);
-	if (nullptr == pDst || pDst->stNextVA.nWL >= NUM_WL)
+	if (unlikely(nullptr == pDst) || unlikely(pDst->stNextVA.nWL >= NUM_WL))
 	{
 		uint16 nBN = GC_ReqFree_Blocking(OPEN_USER);
 		ASSERT(FF16 != nBN);
@@ -71,7 +71,7 @@ void req_Write_OS(ReqInfo* pReq, uint8 nTag)
 	while(true)
 	{
 		eJRet = META_Update(pReq->nLPN, pDst->stNextVA, OPEN_USER);
-		if (JR_Busy != eJRet)
+		if (likely(JR_Busy != eJRet))
 		{
 			break;
 		}
@@ -83,7 +83,7 @@ void req_Write_OS(ReqInfo* pReq, uint8 nTag)
 
 	pDst->stNextVA.nWL++;
 	
-	if (JR_Filled == eJRet)
+	if (unlikely(JR_Filled == eJRet))
 	{
 		META_ReqSave(false);	// wait till meta save.
 	}
@@ -93,12 +93,12 @@ void req_Write_OS(ReqInfo* pReq, uint8 nTag)
 * Unmap read인 경우, sync response, 
 * normal read는 nand IO done에서 async response.
 */
-bool req_Read_OS(ReqInfo* pReq, uint8 nTag)
+static bool req_Read_OS(ReqInfo* pReq, uint8 nTag)
 {
 	uint32 nLPN = pReq->nLPN;
 	VAddr stAddr = META_GetMap(nLPN);
 
-	if (FF32 != stAddr.nDW)
+	if (likely(FF32 != stAddr.nDW))
 	{
 		CmdInfo* pCmd = IO_Alloc(IOCB_User);
 		IO_Read(pCmd, stAddr.nBN, stAddr.nWL, pReq->nBuf, nTag);
@@ -115,7 +115,7 @@ bool req_Read_OS(ReqInfo* pReq, uint8 nTag)
 /**
 * Shutdown command는 항상 sync로 처리한다.
 */
-void req_Shutdown_OS(ReqInfo* pReq, uint8 nTag)
+static void req_Shutdown_OS(ReqInfo* pReq, uint8 nTag)
 {
 	PRINTF("[SD] %d\n", pReq->eOpt);
 	IO_SetStop(CbKey::IOCB_Mig, true);
@@ -146,7 +146,7 @@ void req_Run(void* pParam)
 			continue;
 		}
 
-		uint8 nCurSlot = gstReqInfoPool.PopHead();
+		uint32 nCurSlot = gstReqInfoPool.PopHead();
 		RunInfo* pRun = gaIssued + nCurSlot;
 		ReqInfo* pReq = gstReqQ.PopHead();
 		pRun->pReq = pReq;
@@ -198,7 +198,7 @@ void reqResp_Run(void* pParam)
 			}
 			else
 			{
-				if (pCmd->nWL == (NUM_DATA_PAGE - 1))
+				if (unlikely(pCmd->nWL == (NUM_DATA_PAGE - 1)))
 				{
 					META_SetBlkState(pCmd->anBBN[0], BS_Closed);
 				}
@@ -218,7 +218,7 @@ static uint32 aRespStk[STK_DW_SIZE_RSP];
 void REQ_Init()
 {
 	gstReqInfoPool.Init();
-	for (uint8 nIdx = 0; nIdx < SIZE_REQ_QUE; nIdx++)
+	for (uint32 nIdx = 0; nIdx < SIZE_REQ_QUE; nIdx++)
 	{
 		gstReqInfoPool.PushTail(nIdx);
 	}

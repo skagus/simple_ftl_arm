@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 #include "main.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -59,16 +60,17 @@ static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN 0 */
 void FTL_Main(void* pParam);
 
-int __io_putchar(int ch)
+#define MAX_BUF_SIZE		(64)
+static char gaBuf[MAX_BUF_SIZE];
+void myPrintf(const char* format, ...)
 {
-     (void) HAL_UART_Transmit(&huart1, (uint8_t*) &ch, 1, 100);
-     return ch;
-}
+    va_list ap;
+    va_start(ap, format);
+    vsprintf(gaBuf, format, ap);
+    va_end(ap);
 
-void myputs(char* szLine)
-{
-	int nLen = strlen(szLine);
-	HAL_UART_Transmit(&huart1, (uint8_t*)szLine, nLen, 100);
+	int nLen = strlen(gaBuf);
+	HAL_UART_Transmit(&huart1, (uint8_t*)gaBuf, nLen, 100);
 }
 /* USER CODE END 0 */
 
@@ -107,7 +109,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  myputs("Start\n");
+  myPrintf("\n\nStart: %s %s\n", __DATE__, __TIME__);
   FTL_Main(NULL);
 
   while (1)

@@ -24,18 +24,15 @@ bool gbReady;
 
 
 
-void open_PostMtLoad();
-
-
-uint16 meta_MtBlk2PBN(uint16 nMetaBN)
+static uint16 meta_MtBlk2PBN(uint16 nMetaBN)
 {
 	return nMetaBN + BASE_META_BLK;
 }
 
 
-void meta_Format()
+static void meta_Format()
 {
-	for (uint16 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
+	for (uint32 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
 	{
 		gstMeta.astBI[nIdx].eState = BS_Closed;
 		gstMeta.astBI[nIdx].nVPC = 0;
@@ -47,7 +44,7 @@ void meta_Format()
 	// TODO: Map save sequence.
 }
 
-void dbg_MapIntegrity()
+static void dbg_MapIntegrity()
 {
 	uint16 anVPC[NUM_USER_BLK];
 	MEMSET_ARRAY(anVPC, 0x0);
@@ -71,7 +68,7 @@ bool META_Ready()
 
 VAddr META_GetMap(uint32 nLPN)
 {
-	if (nLPN < NUM_LPN)
+	if (likely(nLPN < NUM_LPN))
 	{
 		return gstMeta.astL2P[nLPN];
 	}
@@ -85,7 +82,7 @@ VAddr META_GetMap(uint32 nLPN)
 
 BlkInfo* META_GetFree(uint16* pnBN, bool bFirst)
 {
-	for (uint16 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
+	for (uint32 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
 	{
 		BlkInfo* pBI = gstMeta.astBI + nIdx;
 		if ((BS_Closed == pBI->eState)
@@ -197,9 +194,9 @@ OpenBlk* META_GetOpen(OpenType eOpen)
 	return gaOpen + eOpen;
 }
 
-void meta_Save_OS()
+static void meta_Save_OS()
 {
-	if (0 == gstMetaCtx.nNextWL)
+	if (unlikely(0 == gstMetaCtx.nNextWL))
 	{
 		gstMetaCtx.nCurBN = meta_MtBlk2PBN(gstMetaCtx.nCurBO);
 		PRINTF("[MT] ERS BO:%X, BN:%X\n", gstMetaCtx.nCurBO, gstMetaCtx.nCurBN);
@@ -228,7 +225,7 @@ void meta_Save_OS()
 			memcpy(pDst, pSrc, SIZE_MAP_PER_SAVE);
 		}
 
-		uint16 nWL = gstMetaCtx.nNextWL + nIssue;
+		uint32 nWL = gstMetaCtx.nNextWL + nIssue;
 		CmdInfo* pCmd = IO_Alloc(IOCB_Meta);
 		PRINTF("[MT:%X] \t==== PGM (%X,%X) Age:%X, Slice: %X ====\n", pCmd->nDbgSN, gstMetaCtx.nCurBN, nWL, gstMetaCtx.nAge, gstMetaCtx.nNextSlice);
 		IO_Program(pCmd, gstMetaCtx.nCurBN, nWL, nBuf, 0);
@@ -511,7 +508,7 @@ void open_MtLoad_OS(uint16 nMaxBO, uint16 nCPO)
 
 // ========================== Meta Block Scan ====================================
 
-uint16 open_BlkScan_SM()
+static uint16 open_BlkScan_SM()
 {
 	uint8 nIssued = 0;
 	uint8 nDone = 0;
@@ -565,10 +562,36 @@ uint16 open_BlkScan_SM()
 
 // =====================================================
 
+static void open_PostMtLoad()
+{
+	uint16 anVPC[NUM_USER_BLK];
+	MEMSET_ARRAY(anVPC, 0x0);
+	for (uint32 nLPN = 0; nLPN < NUM_LPN; nLPN++)
+	{
+		if (gstMeta.astL2P[nLPN].nBN < NUM_USER_BLK)
+		{
+			anVPC[gstMeta.astL2P[nLPN].nBN]++;
+		}
+	}
+	for (uint16 nBN = 0; nBN < NUM_USER_BLK; nBN++)
+	{
+//		ASSERT(gstMeta.astBI[nBN].nVPC == anVPC[nBN]);
+		gstMeta.astBI[nBN].nVPC = anVPC[nBN];
+		gstMeta.astBI[nBN].eState = BlkState::BS_Closed;
+	}
+	for (uint32 nOpen = 0; nOpen < NUM_OPEN; nOpen++)
+	{
+		if (gaOpen[nOpen].stNextVA.nWL < NUM_WL)
+		{
+			META_SetOpen((OpenType)nOpen, gaOpen[nOpen].stNextVA.nBN, gaOpen[nOpen].stNextVA.nWL);
+		}
+	}
+}
+
 /**
 * @return success, if failure format again.
 */
-bool meta_Open_OS()
+static bool meta_Open_OS()
 {
 	bool bRet = false;
 	uint16 nMaxBO = open_BlkScan_SM();
@@ -596,36 +619,10 @@ bool meta_Open_OS()
 	return FF16 != nMaxBO;
 }
 
-void open_PostMtLoad()
-{
-	uint16 anVPC[NUM_USER_BLK];
-	MEMSET_ARRAY(anVPC, 0x0);
-	for (uint32 nLPN = 0; nLPN < NUM_LPN; nLPN++)
-	{
-		if (gstMeta.astL2P[nLPN].nBN < NUM_USER_BLK)
-		{
-			anVPC[gstMeta.astL2P[nLPN].nBN]++;
-		}
-	}
-	for (uint16 nBN = 0; nBN < NUM_USER_BLK; nBN++)
-	{
-//		ASSERT(gstMeta.astBI[nBN].nVPC == anVPC[nBN]);
-		gstMeta.astBI[nBN].nVPC = anVPC[nBN];
-		gstMeta.astBI[nBN].eState = BlkState::BS_Closed;
-	}
-	for (uint32 nOpen = 0; nOpen < NUM_OPEN; nOpen++)
-	{
-		if (gaOpen[nOpen].stNextVA.nWL < NUM_WL)
-		{
-			META_SetOpen((OpenType)nOpen, gaOpen[nOpen].stNextVA.nBN, gaOpen[nOpen].stNextVA.nWL);
-		}
-	}
-}
-
 
 void meta_Run(void* pParam)
 {
-	if (false == meta_Open_OS())
+	if (unlikely(false == meta_Open_OS()))
 	{
 		meta_Format();
 	}

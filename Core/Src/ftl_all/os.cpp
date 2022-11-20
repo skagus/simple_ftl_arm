@@ -4,6 +4,7 @@
 #include "cpu.h"
 //#include "timer.h"
 
+#define EN_DBG_OS	(0)
 #if defined(__arm__)
 typedef void* TCB;
 #else
@@ -11,25 +12,28 @@ typedef SimTaskId TCB;
 #endif
 struct OS_Info
 {
-	uint8	_numTask;		///< Number of Task.
 	uint32	_curTID;		///< 현재 해당 CPU에서 돌고있는 task ID.
-	bool	_bInCritical;	///< The OS in critical section.(Never context switch in critical section)
 	uint32	_bmRdyTask;		///< Ready task bitmap, (_aBlockBy보다 우선순위 높음)
-
 	uint32	_nTick;					///< Just tick counter
-	uint32	_nTmpTick;				///< Tick count for async tick up.
 
+	TCB		_aTCB[MAX_TASK];	///< TCB 상당의 무엇인데, sim에서는 fiber id와 대응됨.
 	uint32	_aWaitEvt[MAX_TASK];	///< Task가 기다리는 event, wakeup상태에서도 의미있음.
 	int32	_aExpire[MAX_TASK];		///< Remainning tick to ready.(only for tick event)
-	uint32	_bmAsyncEvt;			///< Async event중 처리되지 않은 것.
+	uint8	_numTask;		///< Number of Task.
 
+//	bool	_bInCritical;	///< The OS in critical section.(Never context switch in critical section)
 	Task	_pfTask[MAX_TASK];	///< Task entry.
 	void*	_pParam[MAX_TASK];	///< Task parameter.
-	TCB		_aTCB[MAX_TASK];	///< TCB 상당의 무엇인데, sim에서는 fiber id와 대응됨.
 	void*	pStkTop[MAX_TASK];
 	const char* aszName[MAX_TASK];
+#if (EN_DBG_OS)
 	uint32	anCntSched[MAX_TASK];
+#endif
 } gstOS;
+
+
+volatile uint32 gnAsyncTick;
+volatile uint32 gbmAsyncEvt;
 
 #if defined(__arm__)
 void* pCurTCB;
@@ -39,11 +43,11 @@ void	os_handleAsyncEvt();
 void	os_applyEvt(uint32 bmNewEvt);
 
 
-void os_SetNextTask()
+static void os_SetNextTask()
 {
-	ASSERT(!gstOS._bInCritical);
-	uint8 nPrvTID = gstOS._curTID;
-	uint8 nNxtTID = gstOS._curTID;
+//	ASSERT(!gstOS._bInCritical);
+	uint32 nPrvTID = gstOS._curTID;
+	uint32 nNxtTID = gstOS._curTID;
 
 	os_handleAsyncEvt();
 	uint32 bmRdy = gstOS._bmRdyTask;
@@ -75,7 +79,9 @@ void os_SetNextTask()
 		}
 	}
 	gstOS._curTID = nNxtTID;
+#if (EN_DBG_OS)
 	gstOS.anCntSched[nNxtTID]++;
+#endif
 #if defined(__arm__)
 	pCurTCB = &(gstOS._aTCB[nNxtTID]);
 #endif
@@ -85,7 +91,7 @@ void os_SetNextTask()
 
 uint8 OS_CreateTask(Task pfEntry, void* pStkTop, void* nParam, const char* szName)
 {
-	uint8 nTaskID = gstOS._numTask;
+	uint32 nTaskID = gstOS._numTask;
 	ASSERT(nTaskID < MAX_TASK);
 	gstOS._aExpire[nTaskID] = 0;
 	gstOS._bmRdyTask |= BIT(nTaskID); // initial state = ready.
@@ -99,11 +105,14 @@ uint8 OS_CreateTask(Task pfEntry, void* pStkTop, void* nParam, const char* szNam
 
 
 #if defined(__arm__)
-void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
+static void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 {
 	uint32* pStk = (uint32*)pInStkTop;
 
 	pStk--; *pStk = (uint32)pfTask;	/* R14 */
+#if 0
+	pStk -= 12;
+#else
 	pStk--; *pStk = 0xAC;	/* R12 */
 	pStk--; *pStk = 0xAB;	/* R11 */
 	pStk--; *pStk = 0xAA;	/* R10 */
@@ -116,6 +125,7 @@ void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 	pStk--; *pStk = 0xA3;	/* R3 */
 	pStk--; *pStk = 0xA2;	/* R2 */
 	pStk--; *pStk = 0xA1;	/* R1 */
+#endif
 	pStk--; *pStk = (uint32)pParam;	/* R0 */
 	return pStk;
 }
@@ -162,8 +172,8 @@ void OS_Start()
 #endif
 
 	// Call task 0 (not return).
+	gnAsyncTick = 0;
 	gstOS._curTID = 0;
-	gstOS._nTmpTick = 0;
 	gstOS._pfTask[0](gstOS._pParam[0]);
 	ASSERT(0);
 }
@@ -176,7 +186,7 @@ Wait multi event with timeout
 */
 uint32 OS_Wait(uint32 bmEvt, uint32 nTO)
 {
-	ASSERT(!gstOS._bInCritical);
+//	ASSERT(!gstOS._bInCritical);
 	ASSERT(gstOS._bmRdyTask & BIT(gstOS._curTID));
 	if (0 != nTO)	// Yield case.
 	{
@@ -199,7 +209,7 @@ uint32 OS_Wait(uint32 bmEvt, uint32 nTO)
 
 void OS_Tick()
 {
-	gstOS._nTmpTick++;
+	gnAsyncTick++;
 }
 
 /**
@@ -214,7 +224,7 @@ ISR context에서 당장 하는게 아니라 event flag만 켜 둔다.
 */
 void OS_AsyncEvt(uint32 bmEvt)
 {
-	gstOS._bmAsyncEvt |= bmEvt;
+	gbmAsyncEvt |= bmEvt;
 }
 
 /**
@@ -224,7 +234,7 @@ void os_applyEvt(uint32 bmNewEvt)
 {
 	for (int nTaskId = 0; nTaskId < gstOS._numTask; nTaskId++)
 	{
-		if (gstOS._aWaitEvt[nTaskId] & bmNewEvt)
+		if (unlikely(gstOS._aWaitEvt[nTaskId] & bmNewEvt))
 		{
 			gstOS._bmRdyTask |= BIT(nTaskId);
 			BIT_CLR(gstOS._aWaitEvt[nTaskId], bmNewEvt);
@@ -236,12 +246,12 @@ void os_handleAsyncEvt()
 {
 	CPU_TimePass(0);
 
-	if (gstOS._nTmpTick > 0)
+	if (gnAsyncTick > 0)
 	{
-		uint32 nNewTick = gstOS._nTmpTick;
-		gstOS._nTmpTick = 0;
+		uint32 nNewTick = gnAsyncTick;
+		gnAsyncTick = 0;
 		gstOS._nTick += nNewTick;
-		for (uint8 i = 0; i < gstOS._numTask; i++)
+		for (uint32 i = 0; i < gstOS._numTask; i++)
 		{
 			if (gstOS._aExpire[i] > 0)
 			{
@@ -255,10 +265,10 @@ void os_handleAsyncEvt()
 		}
 	}
 
-	if (0 != gstOS._bmAsyncEvt)
+	if (0 != gbmAsyncEvt)
 	{
-		uint32 bmEvts = gstOS._bmAsyncEvt;
-		gstOS._bmAsyncEvt = 0;
+		uint32 bmEvts = gbmAsyncEvt;
+		gbmAsyncEvt = 0;
 		os_applyEvt(bmEvts);
 	}
 }

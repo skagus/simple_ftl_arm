@@ -258,34 +258,30 @@ inline uint32_t GetTick(bool bReset)
 	return nCnt;
 }
 
-void myputs(char* szLine);
-
 void sc_Test()
 {
     uint32 nNumUserLPN = FTL_GetNumLPN(_CmdDone);
     int32 nTick;
-    char aBuf[32];
 
     InitTick();
-    for(uint32 i = 0; i < 640; i++)
-    {
-    	tc_SeqWrite(0, nNumUserLPN);
-    }
+    tc_SeqRead(0, 1);
     nTick = GetTick(false);
-    sprintf(aBuf, "SW:%d for %d\n", nNumUserLPN * 640, nTick);
-    myputs(aBuf);
+    myPrintf("OPEN: %d\n", nTick);
+
+    GetTick(true);
+    tc_SeqWrite(0, nNumUserLPN);
+    nTick = GetTick(false);
+    myPrintf("SW: %d\n", nTick);
 
     GetTick(true);
     tc_SeqRead(0, nNumUserLPN);
     nTick = GetTick(false);
-    sprintf(aBuf, "SW: %d\n", nTick);
-    myputs(aBuf);
+    myPrintf("SR: %d\n", nTick);
 
     GetTick(true);
     tc_RandRead(0, nNumUserLPN, nNumUserLPN);
     nTick = GetTick(false);
-    sprintf(aBuf, "SW: %d\n", nTick);
-    myputs(aBuf);
+    myPrintf("RR: %d\n", nTick);
 
     GetTick(true);
     tc_RandWrite(0, nNumUserLPN, nNumUserLPN);
