@@ -24,7 +24,7 @@ bool gbReady;
 
 
 
-static uint16 meta_MtBlk2PBN(uint16 nMetaBN)
+static inline uint16 meta_MtBlk2PBN(uint16 nMetaBN)
 {
 	return nMetaBN + BASE_META_BLK;
 }

@@ -2,3 +2,6 @@ Release/
 Debug/
 Drivers/
 *.bak
+.settings/
+ftl_os.launch
+.cproject

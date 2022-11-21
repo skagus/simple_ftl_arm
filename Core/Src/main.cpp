@@ -109,7 +109,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  myPrintf("\n\nStart: %s %s\n", __DATE__, __TIME__);
+  myPrintf("\n\nCoOS Start: %s %s\n", __DATE__, __TIME__);
   FTL_Main(NULL);
 
   while (1)

@@ -70,9 +70,10 @@ static void os_SetNextTask()
 			// interrupt를 기다려야 한다. (interrupt 대신 event)
 			// interrupt대신 event를 더 자주 깨어나서 overhead증가하지만, 
 			// simulation의 정확도 측면에선 차이가 없다.
-			CPU_Sleep();
 #if defined(__arm__) 
 			__asm__ __volatile__("wfi");
+#else
+			CPU_Sleep();
 #endif
 			os_handleAsyncEvt();
 			bmRdy = gstOS._bmRdyTask;
@@ -85,7 +86,6 @@ static void os_SetNextTask()
 #if defined(__arm__)
 	pCurTCB = &(gstOS._aTCB[nNxtTID]);
 #endif
-
 }
 
 
@@ -105,12 +105,12 @@ uint8 OS_CreateTask(Task pfEntry, void* pStkTop, void* nParam, const char* szNam
 
 
 #if defined(__arm__)
-static void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
+void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 {
 	uint32* pStk = (uint32*)pInStkTop;
 
 	pStk--; *pStk = (uint32)pfTask;	/* R14 */
-#if 0
+#if 1
 	pStk -= 12;
 #else
 	pStk--; *pStk = 0xAC;	/* R12 */
@@ -187,7 +187,7 @@ Wait multi event with timeout
 uint32 OS_Wait(uint32 bmEvt, uint32 nTO)
 {
 //	ASSERT(!gstOS._bInCritical);
-	ASSERT(gstOS._bmRdyTask & BIT(gstOS._curTID));
+//	ASSERT(gstOS._bmRdyTask & BIT(gstOS._curTID));
 	if (0 != nTO)	// Yield case.
 	{
 		BIT_CLR(gstOS._bmRdyTask, BIT(gstOS._curTID));
@@ -230,7 +230,7 @@ void OS_AsyncEvt(uint32 bmEvt)
 /**
 하나의 event를 처리한다.
 */
-void os_applyEvt(uint32 bmNewEvt)
+void inline os_applyEvt(uint32 bmNewEvt)
 {
 	for (int nTaskId = 0; nTaskId < gstOS._numTask; nTaskId++)
 	{
