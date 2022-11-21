@@ -2,3 +2,4 @@ Release/
 Debug/
 Drivers/
 *.bak
+.settings/

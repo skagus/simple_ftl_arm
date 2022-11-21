@@ -79,7 +79,7 @@ static bool meta_Format(FmtCtx* pFmtCtx, bool b1st)
 	{
 		case FmtCtx::Memset:
 		{
-			for (uint16 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
+			for (uint32 nIdx = 0; nIdx < NUM_USER_BLK; nIdx++)
 			{
 				gstMeta.astBI[nIdx].eState = BS_Closed;
 				gstMeta.astBI[nIdx].nVPC = 0;
@@ -523,7 +523,7 @@ static bool open_PageScan_SM(MtPgStk* pCtx)
 static void open_ReplayJnl(JnlSet* pJnlSet, uint32 nAge)
 {
 	PRINTF("[OPEN] Replay Jnl Age:%d, Cnt: %d, start with %X\n", nAge, pJnlSet->nCnt, pJnlSet->aJnl[0].Com.nValue);
-	for (uint16 nIdx = 0; nIdx < pJnlSet->nCnt; nIdx++)
+	for (uint32 nIdx = 0; nIdx < pJnlSet->nCnt; nIdx++)
 	{
 		Jnl* pJnl = pJnlSet->aJnl + nIdx;
 		switch (pJnl->Com.eJType)

@@ -27,7 +27,8 @@ struct Sched
 	Evts bmSyncEvt;	///< Sync envent that isn't handled.
 	uint32 nCurTick;
 	uint32 nCurTask;		///< Current running task.
-	TaskBtm gabmModeRun[NUM_MODE];
+	TaskBtm abmModeBackup[NUM_MODE];
+	TaskBtm bmCurRunnable;
 	RunMode geRunMode;
 } gSched;
 
@@ -125,13 +126,14 @@ void Sched_Register(uint32 nTaskID, Entry task, void* pParam, uint32 bmRunMode) 
 	{
 		if (bmRunMode & BIT(eMode))
 		{
-			gSched.gabmModeRun[eMode] |= BIT(nTaskID);
+			gSched.abmModeBackup[eMode] |= BIT(nTaskID);
 		}
 	}
 }
 
 void Sched_SetMode(RunMode eMode)
 {
+	gSched.bmCurRunnable = gSched.abmModeBackup[eMode];
 	gSched.geRunMode = eMode;
 }
 
@@ -162,6 +164,7 @@ void Sched_Init()
 */
 void Sched_Run()
 {
+	Sched_SetMode(MODE_NORMAL);
 	while (true)
 	{
 		// disable interrupt.
@@ -178,9 +181,9 @@ void Sched_Run()
 		gSched.bmRdyTask = 0;
 		if (bmRdy != 0)
 		{
-			while (bmRdy & gSched.gabmModeRun[gSched.geRunMode])
+			while (bmRdy & gSched.bmCurRunnable)
 			{
-				if (BIT(gSched.nCurTask) & bmRdy & gSched.gabmModeRun[gSched.geRunMode])
+				if (BIT(gSched.nCurTask) & bmRdy & gSched.bmCurRunnable)
 				{
 					TaskInfo* pTask = gSched.astTask + gSched.nCurTask;
 					pTask->bmWaitEvt = 0;
@@ -193,7 +196,7 @@ void Sched_Run()
 #endif
 					bmRdy &= ~BIT(gSched.nCurTask);
 				}
-				gSched.nCurTask = (gSched.nCurTask + 1) % NUM_TASK;
+				gSched.nCurTask = (gSched.nCurTask == NUM_TASK-1) ? 0 : gSched.nCurTask + 1;
 			}
 			// Mode에 따라 실행되지 않은 task는 이후에 mode가 복귀했을 때 실행할 것.
 			gSched.bmRdyTask |= bmRdy;

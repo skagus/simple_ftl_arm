@@ -19,7 +19,7 @@ struct RunInfo
 	uint32 nDone; ///< Done count.
 	uint32 nTotal;
 };
-Queue<uint8, SIZE_REQ_QUE> gstReqInfoPool;
+Queue<uint32, SIZE_REQ_QUE> gstReqInfoPool;
 RunInfo gaIssued[SIZE_REQ_QUE];
 
 
