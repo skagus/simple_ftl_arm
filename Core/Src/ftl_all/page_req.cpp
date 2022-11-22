@@ -54,7 +54,6 @@ static void req_Write_OS(ReqInfo* pReq, uint8 nTag)
 {
 	uint32 nLPN = pReq->nLPN;
 
-	bool bRet = false;
 	OpenBlk* pDst = META_GetOpen(OPEN_USER);
 	if (unlikely(nullptr == pDst) || unlikely(pDst->stNextVA.nWL >= NUM_WL))
 	{
