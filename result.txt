@@ -1,0 +1,24 @@
+OS, Release.
+	OPEN: 6531
+	SW: 776662
+	SR: 574415
+	RR: 576588
+
+	OPEN: 6356
+	SW: 750121
+	SR: 567024
+	RR: 567286	
+	
+FSM
+	TC: 0, 5463
+	TC: 1, 878958
+	TC: 2, 658788
+	TC: 3, 656042
+
+	TC: 0, 4528
+	TC: 1, 765752
+	TC: 2, 539337
+	TC: 3, 537415	
+	
+	
+	sudo apt-get install git wget flex bison gperf python3 cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0

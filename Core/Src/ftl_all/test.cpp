@@ -469,7 +469,14 @@ const TestDef gaShortSet[] =
 	{tc_SeqWrite, 0, FF32, FF32},
 	{tc_SeqRead, 0, FF32, FF32},
 	{tc_RandRead, 0, FF32, FF32},
-//	{tc_RandWrite, 0, FF32, FF32},
+	{tc_RandWrite, 0, FF32, 48},
+	{tc_RandWrite, 0, FF32, 48},
+	{tc_RandWrite, 0, FF32, 48},
+	{tc_RandWrite, 0, FF32, 48},
+	{tc_RandWrite, 0, FF32, 48},
+	{tc_RandWrite, 0, FF32, 48},
+	{tc_RandWrite, 0, FF32, 48},
+	{tc_RandWrite, 0, FF32, 48},
 };
 
 void sc_DefRunner(void* pParam)
@@ -482,6 +489,7 @@ void sc_DefRunner(void* pParam)
 		case ScStk::Init:
 		{
 			gnCntLBA = FTL_GetNumLPN(_CmdDone);
+			srand(0);
 			pStk->eStep = ScStk::Prepare;
 			pStk->nTestIdx = 0;
 			InitTick();
