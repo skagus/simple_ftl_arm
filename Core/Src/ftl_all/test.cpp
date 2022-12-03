@@ -264,10 +264,12 @@ void sc_Test()
     int32 nTick;
 
     InitTick();
+    srand(0);
+
     tc_SeqRead(0, 1);
     nTick = GetTick(false);
-    myPrintf("OPEN: %d\n", nTick);
-
+    myPrintf("OPEN: %d, %d\n", nTick, nNumUserLPN);
+#if 1
     GetTick(true);
     tc_SeqWrite(0, nNumUserLPN);
     nTick = GetTick(false);
@@ -282,9 +284,14 @@ void sc_Test()
     tc_RandRead(0, nNumUserLPN, nNumUserLPN);
     nTick = GetTick(false);
     myPrintf("RR: %d\n", nTick);
-
-    GetTick(true);
-    tc_RandWrite(0, nNumUserLPN, nNumUserLPN);
+#endif
+    for(int nCnt = 0; nCnt < 8; nCnt++)
+    {
+		GetTick(true);
+		tc_RandWrite(0, nNumUserLPN, nNumUserLPN / 8);
+		nTick = GetTick(false);
+		myPrintf("RW: %d\n", nTick);
+    }
 }
 
 /**

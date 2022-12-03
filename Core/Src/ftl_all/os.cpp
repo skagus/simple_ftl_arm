@@ -105,12 +105,14 @@ uint8 OS_CreateTask(Task pfEntry, void* pStkTop, void* nParam, const char* szNam
 
 
 #if defined(__arm__)
+#define OS_OPT	(0)	// sometimes, it is slower if optimize on.. why???
+
 void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 {
 	uint32* pStk = (uint32*)pInStkTop;
 
 	pStk--; *pStk = (uint32)pfTask;	/* R14 */
-#if 1
+#if 0
 	pStk -= 12;
 #else
 	pStk--; *pStk = 0xAC;	/* R12 */
@@ -120,11 +122,19 @@ void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 	pStk--; *pStk = 0xA8;	/* R8 */
 	pStk--; *pStk = 0xA7;	/* R7 */
 	pStk--; *pStk = 0xA6;	/* R6 */
+#if (OS_OPT == 0)
 	pStk--; *pStk = 0xA5;	/* R5 */
 	pStk--; *pStk = 0xA4;	/* R4 */
 	pStk--; *pStk = 0xA3;	/* R3 */
 	pStk--; *pStk = 0xA2;	/* R2 */
 	pStk--; *pStk = 0xA1;	/* R1 */
+#else
+//	pStk--; *pStk = 0xA5;	/* R5 */
+	pStk--; *pStk = 0xA4;	/* R4 */
+	pStk--; *pStk = 0xA3;	/* R3 */
+//	pStk--; *pStk = 0xA2;	/* R2 */
+	pStk--; *pStk = 0xA1;	/* R1 */
+#endif
 #endif
 	pStk--; *pStk = (uint32)pParam;	/* R0 */
 	return pStk;
@@ -132,7 +142,11 @@ void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 
 __attribute__((naked)) void os_SwitchForARM()
 {
+#if (OS_OPT == 0)
 	__asm__ __volatile__("stmdb sp!, {r0-r12, r14}");
+#else
+	__asm__ __volatile__("stmdb sp!, {r0,r1,r3,r4,r6-r12, r14}");
+#endif
 	__asm__ __volatile__("ldr r3, =pCurTCB");
 	__asm__ __volatile__("ldr r2, [r3]");
 	__asm__ __volatile__("str sp, [r2]");	// store SP to Active TCB.
@@ -142,7 +156,11 @@ __attribute__((naked)) void os_SwitchForARM()
 	__asm__ __volatile__("ldr r3, =pCurTCB");
 	__asm__ __volatile__("ldr r2, [r3]");
 	__asm__ __volatile__("ldr sp, [r2]");	// load SP from Active TCB.
+#if (OS_OPT == 0)
 	__asm__ __volatile__("ldmia sp!, {r0-r12, r14}");
+#else
+	__asm__ __volatile__("ldmia sp!, {r0,r1,r3,r4,r6-r12, r14}");
+#endif
 	__asm__ __volatile__("isb");
 
 	__asm__ __volatile__("bx r14");

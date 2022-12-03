@@ -25,6 +25,6 @@ void myPrintf(const char* format, ...);
 #define SIM_GetCycle(...)			(0)
 #define SIM_Print(...)
 
-#define SIM_GetRand(...)			(0)
+#define SIM_GetRand(x)				(rand() % (x))
 #define SIM_GetSeqNo(...)			(0)
 #endif

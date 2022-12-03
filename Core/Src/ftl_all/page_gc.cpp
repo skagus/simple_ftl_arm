@@ -92,6 +92,8 @@ void gc_Move_OS(uint16 nDstBN, uint16 nDstWL)
 	bool bRun = true;
 	GcInfo stGI;
 
+//	myPrintf(".");
+
 	stGI.nDstBN = nDstBN;
 	stGI.nDstWL = nDstWL;
 	stGI.nSrcBN = FF16;
@@ -259,7 +261,6 @@ uint16 GC_ReqFree_Blocking(OpenType eType)
 void GC_BlkErase_OS(OpenType eOpen, uint16 nBN)
 {
 	CbKey eCbKey = eOpen == OPEN_GC ? CbKey::IOCB_Mig : CbKey::IOCB_UErs;
-
 
 	// Erase block.
 	CmdInfo* pCmd = IO_Alloc(eCbKey);
