@@ -9,7 +9,7 @@ MCU = cortex-m3
 BUILD_STRICT = FALSE
 BUILD_PRINT = FALSE
 
-OPTI = -O0
+OPTI = -O3 -flto
 
 ifeq ($(BUILD_PRINT), TRUE)
 	ECHO = 
@@ -51,6 +51,7 @@ CPPSRC = \
 	Core/Src/main.cpp
 
 ASRC = \
+	Core/Src/ftl_all/os.S \
 	Core/Startup/startup_stm32f103c8tx.S
 
 LINK_SCRIPT = STM32F103C8TX_FLASH.ld
@@ -207,18 +208,14 @@ LDFLAGS += -mfloat-abi=soft
 
 #-Xlinker --cref  -nostartfiles   -Xlinker --print-memory-usage -fmessage-length=0
 
-Finished building target: ftl_os.elf
 ################### Action #################
-# add @ for silent.
-GNU_PRIFIX = arm-none-eabi-
-
-CC 		= $(GNU_PRIFIX)gcc
-CPP 	= $(GNU_PRIFIX)g++
-OBJCOPY	= $(GNU_PRIFIX)objcopy
-OBJDUMP	= $(GNU_PRIFIX)objdump
-SIZE	= $(GNU_PRIFIX)size
-AR		= $(GNU_PRIFIX)ar rcs
-NM		= $(GNU_PRIFIX)nm
+CC 		= $(GNU_PREFIX)gcc
+CPP 	= $(GNU_PREFIX)g++
+OBJCOPY	= $(GNU_PREFIX)objcopy
+OBJDUMP	= $(GNU_PREFIX)objdump
+SIZE	= $(GNU_PREFIX)size
+AR		= $(GNU_PREFIX)ar rcs
+NM		= $(GNU_PREFIX)nm
 
 SHELL = sh
 REMOVE = rm -f
@@ -307,7 +304,7 @@ bin: $(TARGET).bin $(TARGET).hex
 lst: $(TARGET).lss $(TARGET).sym
 
 size: $(TARGET).elf
-	$(INFO)
+	$(INFO) $(OPTI)
 	@$(SIZE) --format=gnu $<
 	@$(SIZE) --format=gnu $< > $(TARGET).size
 	@$(SIZE) --format=sysv --radix=16 --common $< >> $(TARGET).size

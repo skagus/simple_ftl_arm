@@ -12,10 +12,10 @@ typedef SimTaskId TCB;
 #endif
 struct OS_Info
 {
-	uint32	_curTID;		///< 현재 해당 CPU에서 돌고있는 task ID.
+uint32	_curTID;		///< 현재 해당 CPU에서 돌고있는 task ID.
 	uint32	_bmRdyTask;		///< Ready task bitmap, (_aBlockBy보다 우선순위 높음)
 	uint32	_nTick;					///< Just tick counter
-
+	
 	TCB		_aTCB[MAX_TASK];	///< TCB 상당의 무엇인데, sim에서는 fiber id와 대응됨.
 	uint32	_aWaitEvt[MAX_TASK];	///< Task가 기다리는 event, wakeup상태에서도 의미있음.
 	int32	_aExpire[MAX_TASK];		///< Remainning tick to ready.(only for tick event)
@@ -43,7 +43,7 @@ void	os_handleAsyncEvt();
 void	os_applyEvt(uint32 bmNewEvt);
 
 
-static void os_SetNextTask()
+void os_SetNextTask()
 {
 //	ASSERT(!gstOS._bInCritical);
 	uint32 nPrvTID = gstOS._curTID;
@@ -105,7 +105,6 @@ uint8 OS_CreateTask(Task pfEntry, void* pStkTop, void* nParam, const char* szNam
 
 
 #if defined(__arm__)
-#define OS_OPT	(1)	// sometimes, it is slower if optimize on.. why???
 
 void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 {
@@ -133,7 +132,10 @@ void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 	return pStk;
 }
 
-__attribute__((naked)) void os_SwitchForARM()
+#if 1
+extern "C" void os_SwitchForARM();
+#else
+__attribute__((naked)) volatile void os_SwitchForARM()
 {
 #if (OS_OPT == 0)
 	__asm__ __volatile__("stmdb sp!, {r0-r12, r14}");
@@ -158,6 +160,7 @@ __attribute__((naked)) void os_SwitchForARM()
 	__asm__ __volatile__("bx r14");
 }
 #endif
+#endif
 /**
 등록된 Task를 모두 fiber로 만든다. 
 
@@ -167,7 +170,7 @@ __attribute__((naked)) void os_SwitchForARM()
 
 void OS_Start()
 {
-#if defined(EN_SIM)
+	#if defined(EN_SIM)
 	for (int i = 1; i < gstOS._numTask; i++)
 	{
 		gstOS._aTCB[i] = CO_RegTask(gstOS._pfTask[i], gstOS._pParam[i], (gstOS.pStkTop[i]));
@@ -182,7 +185,7 @@ void OS_Start()
 #endif
 
 	// Call task 0 (not return).
-	gnAsyncTick = 0;
+		gnAsyncTick = 0;
 	gstOS._curTID = 0;
 	gstOS._pfTask[0](gstOS._pParam[0]);
 	ASSERT(0);
@@ -198,7 +201,7 @@ uint32 OS_Wait(uint32 bmEvt, uint32 nTO)
 {
 //	ASSERT(!gstOS._bInCritical);
 //	ASSERT(gstOS._bmRdyTask & BIT(gstOS._curTID));
-	if (0 != nTO)	// Yield case.
+		if (0 != nTO)	// Yield case.
 	{
 		BIT_CLR(gstOS._bmRdyTask, BIT(gstOS._curTID));
 		gstOS._aExpire[gstOS._curTID] = nTO;

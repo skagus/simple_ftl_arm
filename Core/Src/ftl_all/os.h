@@ -10,6 +10,9 @@
 #define DEF_TASK_GRP		(FF08)			///< Task group for default group.
 #define INV_TASK			(FF08)			///< Invalid task id.
 
+#define OS_OPT				(1)
+
+
 typedef void(*Task)(void* param);
 
 void OS_Init();
@@ -20,6 +23,8 @@ uint32 OS_Wait(uint32 bmEvt, uint32 nTO);
 uint32 OS_SyncEvt(uint32 bmEvt);
 void OS_AsyncEvt(uint32 nEvtID);
 void OS_Stop(uint32 bmTask);
+
+extern "C" void os_SetNextTask();
 
 #define OS_Idle(nTimeout)	OS_Wait(0, nTimeout)
 
