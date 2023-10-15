@@ -290,7 +290,7 @@ void sc_Test()
 		GetTick(true);
 		tc_RandWrite(0, nNumUserLPN, nNumUserLPN / 8);
 		nTick = GetTick(false);
-		myPrintf("RW: %d\n", nTick);
+		myPrintf("RW(%d): %d\n", nCnt, nTick);
     }
 }
 
