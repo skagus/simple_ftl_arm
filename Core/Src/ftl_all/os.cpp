@@ -105,37 +105,30 @@ uint8 OS_CreateTask(Task pfEntry, void* pStkTop, void* nParam, const char* szNam
 
 
 #if defined(__arm__)
-#define OS_OPT	(0)	// sometimes, it is slower if optimize on.. why???
+#define OS_OPT	(1)	// sometimes, it is slower if optimize on.. why???
 
 void* os_InitStk(Task pfTask, void* pInStkTop, void* pParam)
 {
 	uint32* pStk = (uint32*)pInStkTop;
 
 	pStk--; *pStk = (uint32)pfTask;	/* R14 */
-#if 0
-	pStk -= 12;
-#else
+#if (OS_OPT == 0)
 	pStk--; *pStk = 0xAC;	/* R12 */
+#endif
 	pStk--; *pStk = 0xAB;	/* R11 */
 	pStk--; *pStk = 0xAA;	/* R10 */
 	pStk--; *pStk = 0xA9;	/* R9 */
 	pStk--; *pStk = 0xA8;	/* R8 */
 	pStk--; *pStk = 0xA7;	/* R7 */
 	pStk--; *pStk = 0xA6;	/* R6 */
-#if (OS_OPT == 0)
 	pStk--; *pStk = 0xA5;	/* R5 */
 	pStk--; *pStk = 0xA4;	/* R4 */
+#if (OS_OPT == 0)
 	pStk--; *pStk = 0xA3;	/* R3 */
 	pStk--; *pStk = 0xA2;	/* R2 */
 	pStk--; *pStk = 0xA1;	/* R1 */
-#else
-//	pStk--; *pStk = 0xA5;	/* R5 */
-	pStk--; *pStk = 0xA4;	/* R4 */
-	pStk--; *pStk = 0xA3;	/* R3 */
-//	pStk--; *pStk = 0xA2;	/* R2 */
-	pStk--; *pStk = 0xA1;	/* R1 */
 #endif
-#endif
+
 	pStk--; *pStk = (uint32)pParam;	/* R0 */
 	return pStk;
 }
@@ -145,7 +138,7 @@ __attribute__((naked)) void os_SwitchForARM()
 #if (OS_OPT == 0)
 	__asm__ __volatile__("stmdb sp!, {r0-r12, r14}");
 #else
-	__asm__ __volatile__("stmdb sp!, {r0,r1,r3,r4,r6-r12, r14}");
+	__asm__ __volatile__("stmdb sp!, {r0,r4-r11, r14}");
 #endif
 	__asm__ __volatile__("ldr r3, =pCurTCB");
 	__asm__ __volatile__("ldr r2, [r3]");
@@ -159,10 +152,9 @@ __attribute__((naked)) void os_SwitchForARM()
 #if (OS_OPT == 0)
 	__asm__ __volatile__("ldmia sp!, {r0-r12, r14}");
 #else
-	__asm__ __volatile__("ldmia sp!, {r0,r1,r3,r4,r6-r12, r14}");
+	__asm__ __volatile__("ldmia sp!, {r0,r4-r11, r14}");
 #endif
 	__asm__ __volatile__("isb");
-
 	__asm__ __volatile__("bx r14");
 }
 #endif
@@ -171,8 +163,8 @@ __attribute__((naked)) void os_SwitchForARM()
 
 특히 0번 Task는 current thread를 이용해서 만드는데, 
 이는 simulator환경에서는 guest CPU는 fiber로 변경되어 있기 때문이다.
-
 */
+
 void OS_Start()
 {
 #if defined(EN_SIM)
