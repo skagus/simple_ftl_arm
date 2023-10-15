@@ -107,7 +107,9 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  myPrintf("\n\nFSM Start: %s %s\n", __DATE__, __TIME__);
+  extern char* gpVersion;
+
+  myPrintf("\nVersion: %s\nFSM Start !!\n", gpVersion);
   FTL_Main(NULL);
 
   while (1)

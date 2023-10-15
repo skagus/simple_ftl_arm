@@ -401,7 +401,7 @@ bool tc_RandWrite(SubStk* pStk)
 		gbDone = false;
 		stReq.eCmd = CMD_WRITE;
 		stReq.nLPN = pStk->nBaseLBA + SIM_GetRand(pStk->nEndLBAp1 - pStk->nBaseLBA);
-		stReq.nBuf = BM_Alloc();
+		stReq.nBuf = BM_Alloc(); 
 		CMD_PRINTF("[CMD] W %X\n", stReq.nLPN);
 		FTL_Request(&stReq);
 	}
@@ -428,6 +428,7 @@ bool tc_RandWrite(SubStk* pStk)
 typedef bool (*TestRun)(SubStk* pStk);
 struct TestDef
 {
+	char* szName;
 	TestRun pfRun;
 	uint32 nBaseLBA;
 	uint32 nEndLBAp1;	// FF32 : End of LBA.
@@ -465,18 +466,18 @@ inline uint32_t GetTick(bool bReset)
 
 const TestDef gaShortSet[] =
 {
-	{tc_SeqRead, 0, FF32, 1},	///< for Wait open.
-	{tc_SeqWrite, 0, FF32, FF32},
-	{tc_SeqRead, 0, FF32, FF32},
-	{tc_RandRead, 0, FF32, FF32},
-	{tc_RandWrite, 0, FF32, 48},
-	{tc_RandWrite, 0, FF32, 48},
-	{tc_RandWrite, 0, FF32, 48},
-	{tc_RandWrite, 0, FF32, 48},
-	{tc_RandWrite, 0, FF32, 48},
-	{tc_RandWrite, 0, FF32, 48},
-	{tc_RandWrite, 0, FF32, 48},
-	{tc_RandWrite, 0, FF32, 48},
+	{"Init", tc_SeqRead, 0, FF32, 1},	///< for Wait open.
+	{"SW", tc_SeqWrite, 0, FF32, FF32},
+	{"SR", tc_SeqRead, 0, FF32, FF32},
+	{"RR", tc_RandRead, 0, FF32, FF32},
+	{"RW", tc_RandWrite, 0, FF32, 8},
+	{"RW", tc_RandWrite, 0, FF32, 8},
+	{"RW", tc_RandWrite, 0, FF32, 8},
+	{"RW", tc_RandWrite, 0, FF32, 8},
+	{"RW", tc_RandWrite, 0, FF32, 8},
+	{"RW", tc_RandWrite, 0, FF32, 8},
+	{"RW", tc_RandWrite, 0, FF32, 8},
+	{"RW", tc_RandWrite, 0, FF32, 8},
 };
 
 void sc_DefRunner(void* pParam)
@@ -503,11 +504,18 @@ void sc_DefRunner(void* pParam)
 			pTStk->nBaseLBA = gaShortSet[pStk->nTestIdx].nBaseLBA;
 			pTStk->nEndLBAp1 = (FF32 == gaShortSet[pStk->nTestIdx].nEndLBAp1)
 				? gnCntLBA : gaShortSet[pStk->nTestIdx].nEndLBAp1;
-			pTStk->nAmount = (FF32 == gaShortSet[pStk->nTestIdx].nTotal)
-				? gnCntLBA : gaShortSet[pStk->nTestIdx].nTotal;
+			if(tc_RandWrite == gaShortSet[pStk->nTestIdx].pfRun)
+			{
+				pTStk->nAmount = gnCntLBA / gaShortSet[pStk->nTestIdx].nTotal;
+			}
+			else
+			{
+				pTStk->nAmount = (FF32 == gaShortSet[pStk->nTestIdx].nTotal)
+					? gnCntLBA : gaShortSet[pStk->nTestIdx].nTotal;
+			}
 			pTStk->bInit = false;
 			Sched_Yield();
-			GetTick(true);		// Tick...
+			GetTick(true);		// Tick reset.
 			break;
 		}
 
@@ -517,7 +525,7 @@ void sc_DefRunner(void* pParam)
 			{
 				char aBuf[32];
 				nTick = GetTick(false);
-				myPrintf("TC: %d, %d\n", pStk->nTestIdx, nTick);
+				myPrintf("%s, %d\n", gaShortSet[pStk->nTestIdx].szName, nTick);
 
 				pStk->nTestIdx++;
 				if (pStk->nTestIdx < sizeof(gaShortSet) / sizeof(gaShortSet[0]))

@@ -20,5 +20,39 @@ FSM
 	TC: 2, 539337
 	TC: 3, 537415	
 	
+
+
+======== 
+debug
+
+CoOS Start: Dec  3 2022 15:54:47
+OPEN: 15333, 384
+SW: 2192602
+SR: 1751153
+RR: 1778740
+RW: 370778
+RW: 1156122
+RW: 1592879
+RW: 1518772
+RW: 1332371
+RW: 1492717
+RW: 1439506
+RW: 1522402
+
+FSM Start: Dec  3 2022 17:13:25
+TC: 0, 11544
+TC: 1, 2263005
+TC: 2, 1751646
+TC: 3, 1783858
+TC: 4, 407157
+TC: 5, 1043544
+TC: 6, 1543136
+TC: 7, 1524750
+TC: 8, 1259253
+TC: 9, 1403638
+TC: 10, 1424039
+TC: 11, 1243870
+	
+	
 	
 	sudo apt-get install git wget flex bison gperf python3 cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
