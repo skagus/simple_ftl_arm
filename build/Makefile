@@ -1,3 +1,4 @@
+include file_list.mk
 
 ################ Top configuration.
 PRJ_TOP = ..
@@ -9,7 +10,7 @@ MCU = cortex-m3
 BUILD_STRICT = FALSE
 BUILD_PRINT = FALSE
 
-OPTI = -O3
+OPTI = -O1
 
 ifeq ($(BUILD_PRINT), TRUE)
 	ECHO = 
@@ -17,44 +18,11 @@ else
 	ECHO = @
 endif
 
-################ source files ##############
-# Source file들은 project TOP 에서의 위치를 나타낸다.
-CSRC =	\
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_cortex.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_dma.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash_ex.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_pwr.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc_ex.c \
-	Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_uart.c \
-	Core/Src/stm32f1xx_hal_msp.c \
-	Core/Src/stm32f1xx_it.c \
-	Core/Src/syscalls.c \
-	Core/Src/sysmem.c \
-	Core/Src/system_stm32f1xx.c \
-	$(VER_FILE)
-
-CPPSRC = \
-	Core/Src/ftl_all/buf.cpp \
-	Core/Src/ftl_all/io.cpp \
-	Core/Src/ftl_all/scheduler.cpp \
-	Core/Src/ftl_all/page_ftl.cpp \
-	Core/Src/ftl_all/page_gc.cpp \
-	Core/Src/ftl_all/page_meta.cpp \
-	Core/Src/ftl_all/page_req.cpp \
-	Core/Src/ftl_all/test.cpp \
-	Core/Src/main.cpp
-
-ASRC = \
-	Core/Startup/startup_stm32f103c8tx.S
-
-LINK_SCRIPT = STM32F103C8TX_FLASH.ld
+################ Generated Files ##############
 VER_FILE = version.c
+LDS_FILE = $(PRJ_TOP)/$(LINK_SCRIPT)
+GEN_LDS = $(TARGET).lds
+
 ################ Object ##############
 OBJ =	$(CSRC:%.c=$(OBJDIR)/%.c.o) \
 		$(CPPSRC:%.cpp=$(OBJDIR)/%.p.o) \
@@ -101,6 +69,8 @@ INCLUDE =	$(patsubst %,-I$(PRJ_TOP)/%,$(PRJ_INC)) \
 
 
 ################  Common Options for C, C++, ASM
+DEP_FLAGS = -MMD -MP # dependancy generation.
+
 #  -g*:          generate debugging information
 #  -O*:          optimization level
 #  -f...:        tuning, see GCC manual and avr-libc documentation
@@ -111,7 +81,6 @@ FLAGS  = -mcpu=$(MCU)
 #FLAGS += -mthumb
 FLAGS += -Wa,-adhlns=$(@:.o=.lst) # .o file assembly.
 FLAGS += -gdwarf-2 # debug format: dwarf-2
-FLAGS += -MMD -MP # dependancy generation.
 
 ## Optimize ##
 FLAGS += $(OPTI)
@@ -180,7 +149,8 @@ ASFLAGS += -x assembler-with-cpp
 #  -Wl,...:     tell GCC to pass this to linker.
 #    -Map:      create map file
 #    --cref:    add cross reference to  map file
-LDS_OPT = $(patsubst %, -T $(PRJ_TOP)/%, $(LINK_SCRIPT))
+LDS_OPT = -T $(GEN_LDS)
+#LDS_OPT = $(patsubst %, -T $(PRJ_TOP)/%, $(LINK_SCRIPT))
 
 LDFLAGS = -g
 LDFLAGS += -mcpu=$(MCU)
@@ -208,16 +178,13 @@ LDFLAGS += -mfloat-abi=soft
 #-Xlinker --cref  -nostartfiles   -Xlinker --print-memory-usage -fmessage-length=0
 
 ################### Action #################
-# add @ for silent.
-GNU_PRIFIX = arm-none-eabi-
-
-CC 		= $(GNU_PRIFIX)gcc
-CPP 	= $(GNU_PRIFIX)g++
-OBJCOPY	= $(GNU_PRIFIX)objcopy
-OBJDUMP	= $(GNU_PRIFIX)objdump
-SIZE	= $(GNU_PRIFIX)size
-AR		= $(GNU_PRIFIX)ar rcs
-NM		= $(GNU_PRIFIX)nm
+CC 		= $(GNU_PREFIX)gcc
+CPP 	= $(GNU_PREFIX)g++
+OBJCOPY	= $(GNU_PREFIX)objcopy
+OBJDUMP	= $(GNU_PREFIX)objdump
+SIZE	= $(GNU_PREFIX)size
+AR		= $(GNU_PREFIX)ar rcs
+NM		= $(GNU_PREFIX)nm
 
 SHELL = sh
 REMOVE = rm -f
@@ -236,31 +203,37 @@ $(OBJDIR)/%.b.o : $(PRJ_TOP)/%.bin
 $(OBJDIR)/%.c.o : $(PRJ_TOP)/%.c
 	$(INFO)
 	$(DIR_CHK)
-	$(ECHO)$(CC) -c $(CFLAGS) $< -o $@ 
+	$(ECHO)$(CC) -c $(CFLAGS) $(DEP_FLAGS) $< -o $@ 
 
 $(OBJDIR)/%.p.o : $(PRJ_TOP)/%.cpp
 	$(INFO)
 	$(DIR_CHK)
-	$(ECHO)$(CPP) -c $(CPPFLAGS) $< -o $@ 
+	$(ECHO)$(CPP) -c $(CPPFLAGS) $(DEP_FLAGS) $< -o $@ 
 
 $(OBJDIR)/%.s.o : $(PRJ_TOP)/%.S
 	$(INFO)
 	$(DIR_CHK)
-	$(ECHO)$(CC) -c $(ASFLAGS) $< -o $@
+	$(ECHO)$(CC) -c $(ASFLAGS) $(DEP_FLAGS) $< -o $@
 
 ################### File Creation #################
 all: elf bin lst hex size
 
 relink: clean_link all
 
+
+$(GEN_LDS): $(LDS_FILE)
+	$(INFO)
+	$(DIR_CHK)
+	$(ECHO)$(CC) -E -P -x c $(CFLAGS) $< > $@
+
 $(PRJ_TOP)/$(VER_FILE): Makefile
 	$(INFO)
 	@echo "char* gpVersion = \"$(VER_STRING)\";" > $(PRJ_TOP)/$(VER_FILE)
 
-%.elf: $(OBJ)
+%.elf: $(OBJ) $(GEN_LDS)
 	$(INFO)
 	$(DIR_CHK)
-	$(ECHO)$(CC) $(LDFLAGS) $^ $(LIB_OPT) -o $@ 
+	$(ECHO)$(CC) $(LDFLAGS) $(OBJ) $(LIB_OPT) -o $@ 
 
 %.hex: %.elf
 	$(INFO)
@@ -306,10 +279,14 @@ bin: $(TARGET).bin $(TARGET).hex
 lst: $(TARGET).lss $(TARGET).sym
 
 size: $(TARGET).elf
-	$(INFO)
+	$(INFO) $(OPTI)
 	@$(SIZE) --format=gnu $<
 	@$(SIZE) --format=gnu $< > $(TARGET).size
 	@$(SIZE) --format=sysv --radix=16 --common $< >> $(TARGET).size
+
+size_all:
+	echo $(OPTI) >> size_all.txt
+	$(SIZE) --format=gnu $(TARGET).elf >> size_all.txt
 
 prog: $(TARGET).hex
 	st-link_cli -P $(TARGET).hex -Rst
@@ -329,7 +306,8 @@ clean_link:
 	$(REMOVE) $(TARGET).elf $(TARGET).a \
 			$(TARGET).hex $(TARGET).bin \
 			$(TARGET).lss $(TARGET).sym \
-			$(TARGET).map $(TARGET).size
+			$(TARGET).map $(TARGET).size \
+			$(TARGET).lds
 
 # Include the dependency files.
 -include $(patsubst %.c,$(OBJDIR)/%.c.d,$(CSRC))
