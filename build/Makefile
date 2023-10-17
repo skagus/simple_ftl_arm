@@ -1,72 +1,34 @@
-include file_list.mk
-
-################ Top configuration.
-PRJ_TOP = ..
-TARGET = ftl_fsm
-OBJDIR = obj
-
-MCU = cortex-m3
-
-BUILD_STRICT = FALSE
-BUILD_PRINT = FALSE
-
-OPTI = -O1
+include proj.mk
 
 ifeq ($(BUILD_PRINT), TRUE)
 	ECHO = 
 else
 	ECHO = @
 endif
+MCU = cortex-m3
 
 ################ Generated Files ##############
-VER_FILE = version.c
-LDS_FILE = $(PRJ_TOP)/$(LINK_SCRIPT)
+VER_FILE = build/version.c
 GEN_LDS = $(TARGET).lds
 
-################ Object ##############
+CSRC += $(VER_FILE)
+
+################ Generating ######
 OBJ =	$(CSRC:%.c=$(OBJDIR)/%.c.o) \
 		$(CPPSRC:%.cpp=$(OBJDIR)/%.p.o) \
 		$(ASRC:%.S=$(OBJDIR)/%.s.o) \
 		$(DATA:%.bin=$(OBJDIR)/%.b.o)
 
 LST =	$(OBJ:%.o=%.lst)
+
 DEP =	$(OBJ:%.o=%.d)
-
-################  Define
-DEFINE = 
-# STM32F103C8T6 <-- MD performance.
-DEFINE += -DSTM32F103xB
-DEFINE += -DUSE_HAL_DRIVER
-DEFINE += -DDEBUG
-
-################  Library directory.
-PRJ_LIB_DIR =
-
-EXT_LIB_DIR = 
-
-LIB_FILE =
 
 LIB_OPT =	$(patsubst %,-L$(PRJ_TOP)/%,$(PRJ_LIB_DIR)) \
 			$(patsubst %,-L%,$(EXT_LIB_DIR)) \
 			$(patsubst %,-l%,$(LIB_FILE))
 
-################  Include.
-# Add relative path from $(PRJ_TOP)
-PRJ_INC = \
-	Core/Inc \
-	Drivers/STM32F1xx_HAL_Driver/Inc/Legacy \
-	Drivers/STM32F1xx_HAL_Driver/Inc \
-	Drivers/CMSIS/Device/ST/STM32F1xx/Include \
-	Drivers/CMSIS/Include
-
-
-# Add absolue path. (ex. c:/lib/inc)
-EXT_INC =
-
 INCLUDE =	$(patsubst %,-I$(PRJ_TOP)/%,$(PRJ_INC)) \
 			$(patsubst %,-I%,$(EXT_INC))
-
-
 
 ################  Common Options for C, C++, ASM
 DEP_FLAGS = -MMD -MP # dependancy generation.
@@ -217,11 +179,11 @@ $(OBJDIR)/%.s.o : $(PRJ_TOP)/%.S
 
 ################### File Creation #################
 all: elf bin lst hex size
+	@cat $(PRJ_TOP)/$(VER_FILE)
 
 relink: clean_link all
 
-
-$(GEN_LDS): $(LDS_FILE)
+$(GEN_LDS): $(PRJ_TOP)/$(LINK_SCRIPT)
 	$(INFO)
 	$(DIR_CHK)
 	$(ECHO)$(CC) -E -P -x c $(CFLAGS) $< > $@
@@ -265,12 +227,8 @@ TARGET_ALL=	$(TARGET).elf $(TARGET).a \
 			$(TARGET).hex $(TARGET).bin \
 			$(TARGET).lss $(TARGET).sym $(TARGET).map
 
-VER_STRING = $$(date +%Y%m%d_%H%M%S)_$(OPTI)
-
 version:
 	@echo "char* gpVersion = \"$(VER_STRING)\";" > $(PRJ_TOP)/$(VER_FILE)
-#	@echo "char* gpVersion = \"$$(date_time)\";" > $(PRJ_TOP)/$(VER_FILE)
-#	@echo "char* gpVersion = \"$$(date +%Y%m%d_%H%M%S)\";" > $(PRJ_TOP)/$(VER_FILE)
 
 obj: $(OBJ)
 lib: $(TARGET).a

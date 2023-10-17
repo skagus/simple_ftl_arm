@@ -1,5 +1,43 @@
+################ Top configuration.
+PRJ_TOP = ..
+TARGET = ftl_fsm
+OBJDIR = obj
+OPTI = -O1
+
+VER_STRING := $$(date +%Y%m%d_%H%M%S)_$(OPTI)
+
+BUILD_STRICT = FALSE
+BUILD_PRINT = FALSE
 
 LINK_SCRIPT = STM32F103C8TX_FLASH.ld
+
+################  Define
+DEFINE = 
+# STM32F103C8T6 <-- MD performance.
+DEFINE += -DSTM32F103xB
+DEFINE += -DUSE_HAL_DRIVER
+DEFINE += -DDEBUG
+
+################  Include.
+# Add relative path from $(PRJ_TOP)
+PRJ_INC = \
+	Core/Inc \
+	Drivers/STM32F1xx_HAL_Driver/Inc/Legacy \
+	Drivers/STM32F1xx_HAL_Driver/Inc \
+	Drivers/CMSIS/Device/ST/STM32F1xx/Include \
+	Drivers/CMSIS/Include
+
+# Add absolue path. (ex. c:/lib/inc)
+EXT_INC =
+
+################  Library directory.
+# Add relative path from $(PRJ_TOP)
+PRJ_LIB_DIR =
+
+# Add Absolute path
+EXT_LIB_DIR = 
+
+LIB_FILE = c
 
 ################ source files ##############
 # Source file들은 project TOP 에서의 위치를 나타낸다.
@@ -20,8 +58,7 @@ CSRC =	\
 	Core/Src/stm32f1xx_it.c \
 	Core/Src/syscalls.c \
 	Core/Src/sysmem.c \
-	Core/Src/system_stm32f1xx.c \
-	$(VER_FILE)
+	Core/Src/system_stm32f1xx.c
 
 CPPSRC = \
 	Core/Src/ftl_all/buf.cpp \
